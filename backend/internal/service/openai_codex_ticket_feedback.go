@@ -26,6 +26,9 @@ func (s *OpenAIGatewayService) boundCodexTicketFromHeader(ctx context.Context, h
 	if sent == "" {
 		return nil
 	}
+	if shared, _ := ctx.Value(sharedAstraTicketContextKey{}).(*openAICodexTicket); shared != nil && !shared.Revoked && shared.State == sent && shared.valid(time.Now(), 780) {
+		return shared
+	}
 	for _, model := range s.openAICodexTicketConfig().Models {
 		ticket := s.lookupOpenAICodexTicket(account, model)
 		if ticket != nil && ticket.State == sent && !ticket.Revoked {

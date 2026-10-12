@@ -554,6 +554,7 @@ type OpenAIGatewayService struct {
 	astraCandySeen                 map[[32]byte]time.Time
 	astraCandyRunning              int
 	astraCandyVerdicts             map[[32]byte]astraCandyVerdict
+	astraBusinessInjected          map[string]struct{}
 	openaiCodexTickets             sync.Map
 	openaiCodexTicketStateMu       sync.Mutex
 	openaiCodexTicketCursors       sync.Map // codexHarvestTier -> *atomic.Uint64

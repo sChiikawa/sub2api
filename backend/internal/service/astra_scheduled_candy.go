@@ -25,6 +25,11 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 	if s.settingService == nil || account == nil || ticket == nil || ticket.Model != OpenAICodexStateProbeDefaultModel || ticket.Length != 780 || ticket.Transport != "sse" || !ticket.valid(time.Now(), 780) || IsOpenAICodexStateProbeRequest(ctx) {
 		return
 	}
+	// A ticket borrowed from another account was already candy-checked before it
+	// could be injected. Do not re-test it under the borrower's identity.
+	if ticket.AccountID > 0 && ticket.AccountID != account.ID {
+		return
+	}
 	if _, tested := s.astraCandyVerdictFor(account.ID, ticket); tested {
 		return
 	}

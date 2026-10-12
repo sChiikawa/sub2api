@@ -184,6 +184,9 @@ func (s *OpenAIGatewayService) ticketPoolSchedulingReady(account *Account, setti
 		if s.lookupOpenAICodexTicket(account, model).valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
 			return true
 		}
+		if model == OpenAICodexStateProbeDefaultModel && s.memoryCandyAstraTicket(account.ID) != nil {
+			return true
+		}
 	}
 	return false
 }

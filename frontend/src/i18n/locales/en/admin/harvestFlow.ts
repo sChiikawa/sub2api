@@ -8,7 +8,7 @@ export default {
     probeVerified: 'Continuation completed · original ticket retained · route unchanged',
     probeIncomplete: 'Probe failed or incomplete; check the latest probe result',
     title: 'Ticket Harvest Flow',
-    description: 'Node rotation → fast reuse / self-harvest → probe validation → ticket store → account selection',
+    description: 'Node rotation → self-harvest → probe validation → ticket store → account selection',
     externalProxy: 'Static / external proxy',
     externalProxyHint: 'Node rotation is managed by the proxy provider; no local sidecar is required.',
     proxyUnconfigured: 'Harvest proxy not configured',

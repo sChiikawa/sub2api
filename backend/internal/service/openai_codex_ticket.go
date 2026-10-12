@@ -746,12 +746,21 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	if !openAICodexSkipHarvest(account) && cfg.FailClosed && s.openAICodexTicketHarvestExcluded(account) {
 		return denyOpenAITicket()
 	}
+	protocol := "sse"
+	if (len(transport) > 0 && transport[0] == "websocket") || h.Get("OpenAI-Beta") == openAIWSBetaV1Value || h.Get("OpenAI-Beta") == openAIWSBetaV2Value || strings.EqualFold(h.Get("Upgrade"), "websocket") {
+		protocol = "websocket"
+	}
+	// Non-source business requests wear a candy-passed ticket. Cookies and
+	// egress are attached when the request is sent; this only keeps admission
+	// from rejecting an account that has no ticket of its own.
+	if protocol == "sse" {
+		if shared := s.memoryCandyAstraTicket(account.ID); shared != nil {
+			h.Set(openAICodexTurnStateHeader, shared.State)
+			return nil
+		}
+	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
 	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
-		protocol := "sse"
-		if (len(transport) > 0 && transport[0] == "websocket") || h.Get("OpenAI-Beta") == openAIWSBetaV1Value || h.Get("OpenAI-Beta") == openAIWSBetaV2Value || strings.EqualFold(h.Get("Upgrade"), "websocket") {
-			protocol = "websocket"
-		}
 		if ticket.Transport != "" && ticket.Transport != protocol {
 			if h.Get(openAICodexTurnStateHeader) == ticket.State {
 				h.Del(openAICodexTurnStateHeader)
@@ -836,7 +845,10 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 		return true
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	return !ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
+	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
+		return false
+	}
+	return model != OpenAICodexStateProbeDefaultModel || s.memoryCandyAstraTicket(account.ID) == nil
 }
 
 func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account, requestedModel string, requireCompact bool) bool {
@@ -856,7 +868,10 @@ func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account
 		return false
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	return ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
+	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
+		return true
+	}
+	return model == OpenAICodexStateProbeDefaultModel && s.memoryCandyAstraTicket(account.ID) != nil
 }
 
 func extraTruthy(value any) bool {

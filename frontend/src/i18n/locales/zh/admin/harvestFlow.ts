@@ -8,7 +8,7 @@ export default {
     probeVerified: '完整续接通过 · 原票未重签 · 路由未变',
     probeIncomplete: '探针未通过或未完成，请查看最近一次探测结果',
     title: '打票全流程',
-    description: '节点轮换 → 快速复用 / 目标账号自采 → 探针校验 → 门票入库 → 账号选中',
+    description: '节点轮换 → 目标账号自采 → 探针校验 → 门票入库 → 账号选中',
     externalProxy: '静态/外部代理',
     externalProxyHint: '节点轮换由代理服务商管理，无需本地 sidecar。',
     proxyUnconfigured: '尚未配置采票代理',
