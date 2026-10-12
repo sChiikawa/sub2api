@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 type AstraGatewayHistoryRecord struct {
@@ -30,6 +32,26 @@ type AstraGatewayHistoryRepository interface {
 }
 type AstraGatewayHistoryRecorder interface {
 	SetAstraGatewayHistoryRecorder(func(AstraGatewayHistoryRecord, bool))
+}
+
+// recordAstraGatewayHistory stores a gateway hostname taken from a route cookie.
+// Callers must already have reduced it to the known OpenAI gateway host shape.
+func (s *OpenAIGatewayService) recordAstraGatewayHistory(row AstraGatewayHistoryRecord, passed bool) {
+	if s == nil || s.settingService == nil || row.Gateway == "" || row.SourceAccountID <= 0 {
+		return
+	}
+	history, ok := s.settingService.settingRepo.(AstraGatewayHistoryRepository)
+	if !ok {
+		return
+	}
+	if row.LastSeen.IsZero() {
+		row.LastSeen = time.Now()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := history.RecordAstraGateway(ctx, row, passed); err != nil {
+		logger.L().Warn("astra gateway history persistence failed")
+	}
 }
 
 func (s *AccountTestService) AstraGatewayHistory(ctx context.Context, host string, passed bool, offset, limit int) (AstraGatewayHistoryPage, error) {

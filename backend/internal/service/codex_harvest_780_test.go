@@ -25,6 +25,28 @@ func mint780State(issued time.Time) string {
 	binary.BigEndian.PutUint64(raw[1:9], uint64(issued.Unix()))
 	return base64.URLEncoding.EncodeToString(raw)
 }
+func TestGatewayCookieIsLoggedWithoutATicket(t *testing.T) {
+	resetCodexHarvestFlow()
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
+	account := ticketTestAccount(1)
+	account.Name = "source"
+	resp := &http.Response{StatusCode: 500, Header: http.Header{"Set-Cookie": mint780Pair(time.Now().Add(time.Hour), "unified-42")}}
+	s.noteObservedGatewayCookie(account, "gpt-6-astra", resp)
+	s.noteObservedGatewayCookie(account, "gpt-6-astra", &http.Response{StatusCode: 200, Header: http.Header{"Set-Cookie": []string{"__cflb=route"}}})
+	var seen []CodexHarvestFlowEvent
+	for _, event := range listCodexHarvestFlowEvents() {
+		if event.Kind == "gateway_seen" {
+			seen = append(seen, event)
+		}
+	}
+	require.Len(t, seen, 1)
+	require.Equal(t, "chat.gateway.unified-42.api.openai.com", seen[0].Node)
+	require.Equal(t, seen[0].Node, seen[0].Detail)
+	require.NotContains(t, seen[0].Detail, "__oailb")
+	require.Equal(t, int64(1), seen[0].AccountID)
+	require.Equal(t, 500, seen[0].HTTPStatus)
+}
+
 func TestCodex780Validation(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	pair := mint780Pair(now.Add(time.Hour), "unified-95")

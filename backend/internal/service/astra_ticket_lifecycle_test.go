@@ -493,12 +493,15 @@ func TestUnifiedAstraForwardingWearsCandyTicketWithoutProbing(t *testing.T) {
 			borrowed = append(borrowed, event)
 		}
 	}
-	require.Len(t, borrowed, 1, "the same candy ticket is logged once for this account")
-	require.Equal(t, "ticket", borrowed[0].Stage)
-	require.Equal(t, int64(2), borrowed[0].AccountID)
-	require.Equal(t, "#1", borrowed[0].Detail)
-	require.Equal(t, "gpt-6-astra", borrowed[0].Model)
-	require.Equal(t, "candy_passed", borrowed[0].Result)
+	require.Len(t, borrowed, 3)
+	for _, event := range borrowed {
+		require.Equal(t, "ticket", event.Stage)
+		require.Equal(t, int64(2), event.AccountID)
+		require.Equal(t, "#1", event.Detail)
+		require.Equal(t, "gpt-6-astra", event.Model)
+		require.Equal(t, "candy_passed", event.Result)
+		require.Equal(t, "chat.gateway.unified-42.api.openai.com", event.Node)
+	}
 	source, _ := repo.GetByID(t.Context(), 1)
 	sourceReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
 	require.NoError(t, err)
@@ -550,4 +553,35 @@ func TestUnifiedAstraLendsSolTicketWithoutHarvestEgress(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 1, calls)
+}
+
+type astraHistoryRepo struct {
+	SettingRepository
+	rows   []AstraGatewayHistoryRecord
+	passed []bool
+}
+
+func (r *astraHistoryRepo) RecordAstraGateway(_ context.Context, row AstraGatewayHistoryRecord, passed bool) error {
+	r.rows = append(r.rows, row)
+	r.passed = append(r.passed, passed)
+	return nil
+}
+func (r *astraHistoryRepo) ListAstraGateways(context.Context, string, bool, int, int) (AstraGatewayHistoryPage, error) {
+	return AstraGatewayHistoryPage{}, nil
+}
+
+func TestBusinessBorrowUpdatesGatewayHostHistory(t *testing.T) {
+	s, _, seed := unifiedAstraFixture(t)
+	history := &astraHistoryRepo{}
+	s.settingService = &SettingService{settingRepo: history}
+	borrower, donor := ticketTestAccount(2), ticketTestAccount(1)
+	donor.Name = "source"
+	s.noteAstraBusinessInjection(borrower, donor, seed)
+	s.noteAstraBusinessInjection(borrower, donor, seed)
+	require.Len(t, history.rows, 2)
+	require.Equal(t, []bool{true, true}, history.passed)
+	require.Equal(t, "chat.gateway.unified-42.api.openai.com", history.rows[1].Gateway)
+	require.Equal(t, int64(1), history.rows[1].SourceAccountID)
+	require.Equal(t, int64(2), history.rows[1].TargetAccountID)
+	require.Equal(t, "target_probe_passed", history.rows[1].LastReason)
 }

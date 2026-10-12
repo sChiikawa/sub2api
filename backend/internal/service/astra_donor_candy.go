@@ -182,6 +182,33 @@ func (s *OpenAIGatewayService) checkAstraDonorCandy(ctx context.Context, account
 	if reason == "candy_passed" {
 		kind = "candy_pass"
 	}
-	recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: account.ID, AccountName: account.Name, Model: ticket.Model, Reason: reason, Result: "lend_check", Detail: reason})
+	recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: account.ID, AccountName: account.Name, Model: ticket.Model, Node: codex780CookieGatewayHost(ticket.HarvestCookies), Reason: reason, Result: "lend_check", Detail: reason})
+	s.recordAstraCandyGatewayHistory(account, ticket, reason)
 	return reason == "candy_passed"
+}
+
+func (s *OpenAIGatewayService) recordAstraCandyGatewayHistory(account *Account, ticket *openAICodexTicket, reason string) {
+	if account == nil || ticket == nil {
+		return
+	}
+	passed := reason == "candy_passed"
+	switch reason {
+	case "candy_passed", "candy_incorrect", "candy_model_mismatch", "candy_ticket_changed", "candy_route_changed":
+	default:
+		return
+	}
+	host := codex780CookieGatewayHost(ticket.HarvestCookies)
+	if host == "" {
+		return
+	}
+	lastReason := "response_not_qualified"
+	if passed {
+		lastReason = "qualified"
+	}
+	s.recordAstraGatewayHistory(AstraGatewayHistoryRecord{
+		Gateway:         host,
+		SourceAccountID: account.ID,
+		LastSeen:        time.Now(),
+		LastReason:      lastReason,
+	}, passed)
 }

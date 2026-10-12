@@ -330,7 +330,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'gateway_seen' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -372,7 +372,7 @@ function eventDetail(event: CodexHarvestFlowEvent) {
     const id = Number(/^#(\d+)$/.exec(event.detail || '')?.[1])
     const source = id && accountNames.value[id] ? `#${id} ${accountNames.value[id]}` : event.detail || '—'
     const key = event.kind === 'business_borrow' ? 'admin.harvestFlow.borrowedForRequest' : 'admin.harvestFlow.borrowedFrom'
-    return t(key, { source, model: event.model || '—' })
+    return t(key, { source, model: event.model || '—', gateway: event.node || '—' })
   }
   if (event.kind === 'probe_hit') {
     return event.reason === 'probe_verified' ? t('admin.harvestFlow.probeVerified') : t('admin.harvestFlow.probeIncomplete')

@@ -288,6 +288,41 @@ func recordCodexHarvestNode(now, groupType string, allCount int) {
 	})
 }
 
+// noteObservedGatewayCookie records a gateway hostname carried by a response
+// cookie. A ticket does not have to be accepted; the cookie alone is enough.
+func (s *OpenAIGatewayService) noteObservedGatewayCookie(account *Account, model string, resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	s.noteObservedGatewayCookies(account, model, responseCookiePairs(resp), resp.StatusCode)
+}
+
+func (s *OpenAIGatewayService) noteObservedGatewayCookies(account *Account, model string, cookies []string, httpStatus int) {
+	host := codex780CookieGatewayHost(cookies)
+	if host == "" {
+		return
+	}
+	event := CodexHarvestFlowEvent{
+		Stage:      "probe",
+		Kind:       "gateway_seen",
+		Model:      model,
+		Node:       host,
+		HTTPStatus: httpStatus,
+		Result:     "gateway_seen",
+		Detail:     host,
+	}
+	if account != nil {
+		event.AccountID = account.ID
+		event.AccountName = account.Name
+		s.recordAstraGatewayHistory(AstraGatewayHistoryRecord{
+			Gateway:         host,
+			SourceAccountID: account.ID,
+			LastReason:      "qualified",
+		}, true)
+	}
+	recordCodexHarvestFlow(event)
+}
+
 func recordCodexHarvestProbe(account *Account, model, result, node, detail string, httpStatus, length, blocks, expectedLength, expectedBlocks int, verified ...bool) {
 	kind := "probe_miss"
 	if result == "success" {

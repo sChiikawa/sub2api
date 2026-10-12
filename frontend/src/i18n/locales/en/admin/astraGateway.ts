@@ -33,7 +33,7 @@ export default {
     ipAffinity: "IP affinity (follow source proxy)",
     ipAffinityHint: "When enabled, target validation, HTTP requests and new WS sessions use the proxy captured during the selected source route test, including direct access. When disabled, targets use their own proxy. Use a fixed egress or sticky-session proxy; rotating proxies cannot guarantee the same public IP. Save to apply.",
     historyTitle: "Gateway host history",
-    historyHint: "Source acquisition and target state probe results persist across restarts and configuration changes. By default, only hosts with a past target pass are shown; account pairs are tracked separately. Past passes do not establish current availability or permanent model capability. Refreshes every 15 seconds.",
+    historyHint: "Persists gateway hosts from source acquisition, candy results, and business-request borrows across restarts and configuration changes. By default, only hosts a borrowing account has used are shown; account pairs are tracked separately. A past pass does not mean the host is usable now or that model quality is permanent.",
     historySearch: "Search host, e.g. unified-196",
     historyPassed: "Previously passed target verification",
     historyQuery: "Search / Refresh",

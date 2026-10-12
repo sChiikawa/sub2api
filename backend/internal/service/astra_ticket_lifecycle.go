@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -302,20 +301,6 @@ func (s *OpenAIGatewayService) noteAstraBusinessInjection(borrower, donor *Accou
 	if donor != nil && donor.ID > 0 {
 		donorID = donor.ID
 	}
-	key := strconv.FormatInt(borrower.ID, 10) + "\x00" + strconv.FormatInt(donorID, 10) + "\x00" + ticket.State
-	s.astraCandyMu.Lock()
-	if s.astraBusinessInjected == nil {
-		s.astraBusinessInjected = map[string]struct{}{}
-	}
-	if _, seen := s.astraBusinessInjected[key]; seen {
-		s.astraCandyMu.Unlock()
-		return
-	}
-	if len(s.astraBusinessInjected) >= 2048 {
-		s.astraBusinessInjected = map[string]struct{}{}
-	}
-	s.astraBusinessInjected[key] = struct{}{}
-	s.astraCandyMu.Unlock()
 	donorName := ""
 	if donor != nil {
 		donorName = donor.Name
@@ -327,6 +312,7 @@ func (s *OpenAIGatewayService) noteAstraBusinessInjection(borrower, donor *Accou
 		zap.String("model", ticket.Model),
 		zap.String("gateway", ticket.Gateway),
 	)
+	host := codex780CookieGatewayHost(ticket.HarvestCookies)
 	recordCodexHarvestFlow(CodexHarvestFlowEvent{
 		Stage:       "ticket",
 		Kind:        "business_borrow",
@@ -334,9 +320,19 @@ func (s *OpenAIGatewayService) noteAstraBusinessInjection(borrower, donor *Accou
 		AccountID:   borrower.ID,
 		AccountName: borrower.Name,
 		Model:       ticket.Model,
+		Node:        host,
 		Reason:      "candy_passed",
 		Detail:      fmt.Sprintf("#%d", donorID),
 	})
+	if host != "" && donorID > 0 {
+		s.recordAstraGatewayHistory(AstraGatewayHistoryRecord{
+			Gateway:         host,
+			SourceAccountID: donorID,
+			TargetAccountID: borrower.ID,
+			LastSeen:        time.Now(),
+			LastReason:      "target_probe_passed",
+		}, true)
+	}
 }
 
 func (s *OpenAIGatewayService) bindAstraBusinessTicket(ctx context.Context, h http.Header, account *Account, donor *Account, ticket *openAICodexTicket) (string, func(), error) {
@@ -653,14 +649,3 @@ func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGat
 
 // Compile-time assertions keep the repository adapter independent of service internals.
 var _ AstraTicketLifecycle = (*OpenAIGatewayService)(nil)
-
-func astraTicketCooldown(seconds int, retry time.Duration) time.Duration {
-	d := time.Duration(seconds) * time.Second
-	if retry > d {
-		d = retry
-	}
-	if d < time.Second {
-		d = time.Second
-	}
-	return d
-}

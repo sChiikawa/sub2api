@@ -89,7 +89,7 @@ describe('HarvestFlowView nullable API lists', () => {
   it('logs a business request that borrowed a candy-passed ticket', async () => {
     getFlow.mockResolvedValue({ ...response(),
       events: [
-        { id: 'use', stage: 'ticket', kind: 'business_borrow', result: 'candy_passed', detail: '#1', account_id: 2, account_name: 'borrower', model: 'gpt-6-astra' }
+        { id: 'use', stage: 'ticket', kind: 'business_borrow', result: 'candy_passed', detail: '#1', account_id: 2, account_name: 'borrower', model: 'gpt-6-astra', node: 'chat.gateway.unified-42.api.openai.com' }
       ]
     })
     const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
@@ -97,6 +97,7 @@ describe('HarvestFlowView nullable API lists', () => {
       await flushPromises()
       expect(wrapper.text()).toContain('admin.harvestFlow.borrowedForRequest #1 Test account')
       expect(wrapper.text()).toContain('gpt-6-astra')
+      expect(wrapper.text()).toContain('chat.gateway.unified-42.api.openai.com')
       await wrapper.findAll('button').find(button => button.text() === 'admin.harvestFlow.stages.ticket')?.trigger('click')
       expect(wrapper.findAll('ol li')).toHaveLength(1)
       expect(wrapper.findAll('ol li .bg-emerald-500')).toHaveLength(1)

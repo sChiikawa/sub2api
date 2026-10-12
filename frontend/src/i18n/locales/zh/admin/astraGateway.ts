@@ -33,7 +33,7 @@ export default {
     ipAffinity: "IP 亲和（跟随来源代理）",
     ipAffinityHint: "开启后，目标复验、HTTP 请求及新建 WS 会话使用所选来源路由测试时的代理；来源直连时目标也直连。关闭后使用目标账号自己的代理。请使用固定出口或粘性会话代理；轮换代理无法保证公网 IP 一致。保存后生效。",
     historyTitle: "网关 host 历史库",
-    historyHint: "持久保存来源获取与目标探针结果，重启和配置变更后仍可查询。默认只显示曾通过目标复验的 host；同一 host 的不同账号单独统计。历史通过不代表当前可用，也不证明模型能力永久恢复。每 15 秒刷新。",
+    historyHint: "持久保存来源获取、糖果题结果和业务请求借票用到的网关 host，重启和配置变更后仍可查询。默认只显示曾有借票账号通过的 host；同一 host 的不同账号单独统计。历史通过不代表当前可用，也不证明模型能力永久恢复。",
     historySearch: "搜索 host，例如 unified-196",
     historyPassed: "仅曾通过目标复验",
     historyQuery: "查询 / 刷新",
