@@ -12,10 +12,10 @@ vi.mock('@/api/admin/codexHarvest', () => ({
   getCodexHarvestNodes: api.getNodes,
   resetCodexHarvestNodes: api.reset
 }))
+vi.mock('@/components/admin/HarvestGatewayBorrowPanel.vue', () => ({ default: { template: '<section />' } }))
+vi.mock('@/components/admin/HarvestManualConsole.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/stores', () => ({ useAppStore: () => toast }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
-vi.mock('@/components/admin/HarvestGatewayBorrowPanel.vue', () => ({ default: { name: 'HarvestGatewayBorrowPanel', render: () => null } }))
-vi.mock('@/components/admin/HarvestManualConsole.vue', () => ({ default: { name: 'HarvestManualConsole', render: () => null } }))
 
 function snapshot(): CodexHarvestControlSnapshot {
   const speed = { round_interval_seconds: 180, probe_interval_seconds: 2, attempt_timeout_seconds: 25, cooldown_seconds: 180, max_requests_per_round: 6, max_node_attempts: 3, refresh_before_seconds: 600 }

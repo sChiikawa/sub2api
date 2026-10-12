@@ -1207,6 +1207,7 @@ export interface CodexHarvestFlowAccount {
   status: string
   schedulable: boolean
   skip_harvest?: boolean
+  harvest_selected?: boolean
   in_scope?: boolean
   availability?: string
   recover_at?: string
