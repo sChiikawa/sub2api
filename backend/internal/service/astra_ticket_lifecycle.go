@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -258,11 +259,10 @@ func (s *OpenAIGatewayService) sharedAstraBusinessTicket(ctx context.Context, ac
 	return donor, ticket
 }
 
-// dressSharedAstraBusinessRequest puts the candy-passed ticket's state and
-// route cookies on the outgoing request for the same model. The account keeps
-// its own Authorization, account id and configured egress.
+// dressSharedAstraBusinessRequest used to put a candy-passed ticket on a
+// business request. Gateway rotation leaves the request unchanged.
 func (s *OpenAIGatewayService) dressSharedAstraBusinessRequest(req *http.Request, account *Account) (*http.Request, error) {
-	if req == nil || account == nil {
+	if req == nil || account == nil || (s != nil && s.UnifiedAstraTicketsEnabled(req.Context())) {
 		return req, nil
 	}
 	raw, _ := snapshotHTTPRequestBody(req)
@@ -272,6 +272,9 @@ func (s *OpenAIGatewayService) dressSharedAstraBusinessRequest(req *http.Request
 	model := extractOpenAICodexTicketModel(raw)
 	donor, shared := s.sharedAstraBusinessTicket(req.Context(), account, "sse", model)
 	if shared != nil {
+		if slot, _ := s.currentAccountGateway(account, model, time.Now()); slot != nil {
+			shared.HarvestCookies = append([]string(nil), slot.Cookies...)
+		}
 		req.Header.Set(openAICodexTurnStateHeader, shared.State)
 		req = req.WithContext(context.WithValue(req.Context(), sharedAstraTicketContextKey{}, shared))
 		s.noteAstraBusinessInjection(account, donor, shared)
@@ -333,30 +336,6 @@ func (s *OpenAIGatewayService) noteAstraBusinessInjection(borrower, donor *Accou
 			LastReason:      "target_probe_passed",
 		}, true)
 	}
-}
-
-func (s *OpenAIGatewayService) bindAstraBusinessTicket(ctx context.Context, h http.Header, account *Account, donor *Account, ticket *openAICodexTicket) (string, func(), error) {
-	noop := func() {}
-	var proxy string
-	var release func()
-	var err error
-	if donor != nil && donor.ID != account.ID {
-		// A borrowed ticket keeps its state and route cookies. The request
-		// leaves through the borrowing account's own egress.
-		proxy, release = openAIAccountProxyURL(account), noop
-	} else {
-		proxy, release, err = s.pinStoredCodexTicketEgress(ctx, ticket, "")
-		if err != nil {
-			return "", noop, err
-		}
-	}
-	h.Set(openAICodexTurnStateHeader, ticket.State)
-	restoreBoundCodexTicketHarvestIdentity(h, ticket)
-	if donor != nil && donor.ID != account.ID {
-		s.noteAstraBusinessInjection(account, donor, ticket)
-	}
-	releaseChat := s.holdCodexTicketChat(account)
-	return proxy, func() { release(); releaseChat() }, nil
 }
 
 func detachAstraDonorTicket(ticket *openAICodexTicket) *openAICodexTicket {
@@ -562,20 +541,24 @@ func (s *OpenAIGatewayService) ApplyStoredAstraTarget(ctx context.Context, h htt
 	// Never combine another workspace with the caller's credentials. The
 	// access-token provider may have refreshed a token since this DB snapshot.
 	headersMatch := h.Get("ChatGPT-Account-ID") == account.GetCredential("chatgpt_account_id") && h.Get("Authorization") != ""
-	if donor, shared := s.sharedAstraBusinessTicket(ctx, account, protocol, OpenAICodexStateProbeDefaultModel); shared != nil {
-		if !headersMatch {
-			return "", func() {}, errors.New("configuration_changed")
-		}
-		return s.bindAstraBusinessTicket(ctx, h, account, donor, shared)
-	}
-	ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel)
-	if !ticket.valid(time.Now(), 780) || ticket.Transport != protocol {
-		return "", func() {}, ErrOpenAICodexTicketUnavailable
-	}
 	if !headersMatch {
 		return "", func() {}, errors.New("configuration_changed")
 	}
-	return s.bindAstraBusinessTicket(ctx, h, account, nil, ticket)
+	// Business forwarding rotates a saved gateway cookie. It does not attach a
+	// harvested or borrowed ticket state.
+	s.assignBusinessGatewayCookie(h, account, OpenAICodexStateProbeDefaultModel)
+	return openAIAccountProxyURL(account), func() {}, nil
+}
+
+func (s *OpenAIGatewayService) assignBusinessGatewayCookie(h http.Header, account *Account, model string) {
+	if s == nil || h == nil || account == nil {
+		return
+	}
+	slot, _ := s.currentAccountGateway(account, model, time.Now())
+	if slot == nil {
+		return
+	}
+	h.Set("Cookie", strings.Join(slot.Cookies, "; "))
 }
 
 func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGatewayRuntime {

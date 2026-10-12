@@ -86,6 +86,31 @@ describe('HarvestFlowView nullable API lists', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('lists collected gateways without cookie values', async () => {
+    getFlow.mockResolvedValue({ ...response(),
+      gateways: [
+        { host: 'chat.gateway.unified-125.api.openai.com', order: 1, account_id: 2, account_name: 'bob', role: 'primary', has_cookie: true, status: 'active', saved_at: '2026-10-12T13:21:37Z', expires_at: '2099-10-12T14:21:37Z', remaining_seconds: 1939 },
+        { host: 'chat.gateway.unified-125.api.openai.com', order: 2, account_id: 1, account_name: 'alice', role: 'backup', has_cookie: true, status: 'active', saved_at: '2026-10-12T13:21:37Z', expires_at: '2099-10-12T14:21:37Z', remaining_seconds: 1800 },
+        { host: 'chat.gateway.unified-126.api.openai.com', order: 3, has_cookie: true, status: 'retired', reason: 'credential_expired', saved_at: '2026-10-12T13:08:53Z', expires_at: '2099-10-12T14:08:53Z', remaining_seconds: 1175 }
+      ]
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      const pool = wrapper.get('[data-testid="gateway-pool"]')
+      expect(pool.text()).toContain('chat.gateway.unified-125.api.openai.com')
+      expect(pool.text()).toContain('chat.gateway.unified-126.api.openai.com')
+      expect(pool.text()).toContain('#2 bob')
+      expect(pool.text()).toContain('#1 alice')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayBackup')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayStatusActive')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayStatusRetired')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayCredentialExpired')
+      expect(pool.text()).not.toContain('__oailb')
+      expect(pool.text()).not.toContain('__cflb')
+    } finally { wrapper.unmount() }
+  })
+
   it('logs a business request that borrowed a candy-passed ticket', async () => {
     getFlow.mockResolvedValue({ ...response(),
       events: [

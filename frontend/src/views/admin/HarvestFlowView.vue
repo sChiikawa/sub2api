@@ -119,6 +119,39 @@
           </div>
         </div>
 
+        <div class="card p-5" data-testid="gateway-pool">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayPool') }}</h2>
+            <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { n: snapshot.gateways?.length || 0 }) }}</span>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.gatewayPoolHint') }}</p>
+          <p v-if="!snapshot.gateways?.length" class="mt-3 text-sm text-gray-500">{{ t('admin.harvestFlow.gatewayPoolEmpty') }}</p>
+          <div v-else class="mt-3 overflow-x-auto">
+            <table class="min-w-full text-left text-sm">
+              <tbody>
+                <tr v-for="gateway in snapshot.gateways" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-100 dark:border-dark-700">
+                  <td class="py-2 pr-3 align-middle">
+                    <span class="break-all font-mono text-xs text-gray-800 dark:text-gray-200">{{ gateway.host }}</span>
+                    <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
+                  </td>
+                  <td class="whitespace-nowrap py-2 pr-3 align-middle">
+                    <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
+                    <span v-if="gateway.role === 'backup'" class="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{{ t('admin.harvestFlow.gatewayBackup') }}</span>
+                    <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
+                  </td>
+                  <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
+                  <td class="py-2 pr-3 align-middle">
+                    <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                      <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
+                    </div>
+                  </td>
+                  <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-5">
           <div class="card p-5 xl:col-span-2">
             <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.accounts') }}</h2>
@@ -242,7 +275,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import HarvestControlsPanel from '@/components/admin/HarvestControlsPanel.vue'
 import HarvestNodeRecords from '@/components/admin/HarvestNodeRecords.vue'
-import { getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket } from '@/api/admin/accounts'
+import { getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway } from '@/api/admin/accounts'
 import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarvestAvailability } from '@/utils/harvestAvailability'
 
 const { t } = useI18n()
@@ -330,7 +363,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'gateway_seen' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'gateway_seen' || kind === 'gateway_turn' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -452,6 +485,46 @@ function recoverText(account: CodexHarvestFlowAccount) {
   return recovered.date
     ? t('admin.harvestFlow.availability.recoverLater', { date: recovered.date, time: recovered.clock })
     : t('admin.harvestFlow.availability.recoverToday', { time: recovered.clock })
+}
+
+function gatewayStatusLabel(status?: string) {
+  if (status === 'retired') return t('admin.harvestFlow.gatewayStatusRetired')
+  if (status === 'expired') return t('admin.harvestFlow.gatewayStatusExpired')
+  return t('admin.harvestFlow.gatewayStatusActive')
+}
+
+function gatewayStatusClass(status?: string) {
+  if (status === 'retired') return 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300'
+  if (status === 'expired') return 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-300'
+  return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+}
+
+function gatewayRemainingSeconds(gateway: CodexHarvestGateway) {
+  if (gateway.status === 'expired') return 0
+  return secondsUntil(gateway.expires_at) ?? Math.max(0, gateway.remaining_seconds || 0)
+}
+
+function gatewayRemainText(gateway: CodexHarvestGateway) {
+  const left = gatewayRemainingSeconds(gateway)
+  if (gateway.status === 'expired' || left <= 0) return t('admin.harvestFlow.gatewayStatusExpired')
+  const minutes = Math.floor(left / 60)
+  const seconds = left % 60
+  if (minutes <= 0) return t('admin.harvestFlow.durationSeconds', { seconds })
+  return t('admin.harvestFlow.gatewayCountdown', { minutes, seconds: String(seconds).padStart(2, '0') })
+}
+
+function gatewayBarWidth(gateway: CodexHarvestGateway) {
+  const left = gatewayRemainingSeconds(gateway)
+  const pct = Math.max(0, Math.min(100, (left / 3600) * 100))
+  return `${pct}%`
+}
+
+function gatewayBarClass(gateway: CodexHarvestGateway) {
+  const left = gatewayRemainingSeconds(gateway)
+  if (gateway.status === 'expired' || left <= 0) return 'bg-gray-300'
+  if (left >= 30 * 60) return 'bg-emerald-500'
+  if (left >= 10 * 60) return 'bg-amber-500'
+  return 'bg-rose-500'
 }
 
 function formatRemaining(seconds: number) {

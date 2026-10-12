@@ -742,6 +742,11 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	if model == "" || !s.openAICodexTicketGatedModel(model) {
 		return nil
 	}
+	// Business requests rotate saved gateway cookies and do not wear a harvested
+	// or borrowed ticket.
+	if s.UnifiedAstraTicketsEnabled(ctx) {
+		return nil
+	}
 	cfg := s.openAICodexTicketConfig()
 	if !openAICodexSkipHarvest(account) && cfg.FailClosed && s.openAICodexTicketHarvestExcluded(account) {
 		return denyOpenAITicket()
@@ -836,6 +841,9 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 	}
 	model := normalizeOpenAICodexTicketModel(outboundModel)
 	if !s.openAICodexTicketGatedModel(model) {
+		return false
+	}
+	if s.UnifiedAstraTicketsEnabled(context.Background()) {
 		return false
 	}
 	if openAICodexSkipHarvest(account) {

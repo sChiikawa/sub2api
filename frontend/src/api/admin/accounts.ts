@@ -1295,7 +1295,22 @@ export interface CodexHarvestFlowSnapshot {
     tickets_blocked: number
   }
   events: CodexHarvestFlowEvent[]
+  gateways?: CodexHarvestGateway[]
   runtime?: CodexHarvestRuntime
+}
+
+export interface CodexHarvestGateway {
+  host: string
+  order: number
+  account_id?: number
+  account_name?: string
+  role?: 'primary' | 'backup' | string
+  has_cookie: boolean
+  status?: 'active' | 'retired' | 'expired' | string
+  reason?: string
+  saved_at?: string
+  expires_at?: string
+  remaining_seconds?: number
 }
 
 export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {

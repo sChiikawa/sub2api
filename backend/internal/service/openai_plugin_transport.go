@@ -18,6 +18,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		return nil, dressErr
 	}
 	request = s.stickBoundCodexTicketRequest(request, account)
+	s.overlayAccountGatewayCookie(request, account)
 	boundTicket := s.codexTicketRequestBound(request, account)
 	observationTicket := s.boundCodexTicket(request, account)
 	observationHeaders := request.Header.Clone()
@@ -41,6 +42,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		})
 	}()
 	defer func() {
+		if result != nil {
+			s.noteBusinessGatewayCookie(account, openAIRequestModel(request), result)
+		}
 		if resultErr == nil {
 			// Fast admission may have installed the ticket inside the upstream
 			// adapter. Capture the binding before observation can revoke it.

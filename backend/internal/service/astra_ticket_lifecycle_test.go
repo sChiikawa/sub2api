@@ -98,7 +98,7 @@ func TestUnifiedAstraVerifyDoesNotMintBorrowedTicket(t *testing.T) {
 	require.NoError(t, err)
 	release()
 	require.Empty(t, proxy)
-	require.Equal(t, seed.State, h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
 	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
 	require.Equal(t, "Bearer target-token", h.Get("Authorization"))
 	require.True(t, astraAccountSchedulingReady(s.cfg.AstraRouting(t.Context()), s.StoredAstraSnapshot(t.Context()), 2, time.Now()))
@@ -134,7 +134,7 @@ func TestUnifiedAstraReuseBudgetAndProtocol(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
 	_, _, err := s.ApplyStoredAstraTarget(t.Context(), targetTicketHeaders(), 2, "websocket")
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.Zero(t, calls)
 	left := 1
 	a, _ := repo.GetByID(t.Context(), 2)
@@ -334,7 +334,7 @@ func TestUnifiedAstraOwnTicketWinsAndHarvestLockPreventsDuplicateAcquisition(t *
 	bound := false
 	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
 		bound = IsBoundAstraTicketRequest(req.Context())
-		require.Equal(t, seed.State, req.Header.Get(openAICodexTurnStateHeader))
+		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
 		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
 		require.Equal(t, "http://account.invalid:8080", proxy)
 		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
@@ -345,14 +345,14 @@ func TestUnifiedAstraOwnTicketWinsAndHarvestLockPreventsDuplicateAcquisition(t *
 	require.NoError(t, err)
 	release()
 	require.Empty(t, proxy)
-	require.Equal(t, seed.State, h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
 	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
 	req.Header = targetTicketHeaders()
 	resp, err := s.doOpenAIUpstream(req, "http://account.invalid:8080", account)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.True(t, bound)
+	require.False(t, bound)
 	until := time.Now().Add(time.Hour)
 	repo.accounts[2].RateLimitResetAt = &until
 	require.Error(t, s.VerifyStoredAstraTarget(t.Context(), 2), "an existing ticket must not clear cooldowns")
@@ -451,7 +451,7 @@ func TestUnifiedAstraForwardingWearsCandyTicketWithoutProbing(t *testing.T) {
 	calls := 0
 	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
 		calls++
-		require.Equal(t, seed.State, req.Header.Get(openAICodexTurnStateHeader))
+		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
 		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
 		require.Equal(t, "http://account.invalid:8080", proxy)
 		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
@@ -475,7 +475,7 @@ func TestUnifiedAstraForwardingWearsCandyTicketWithoutProbing(t *testing.T) {
 		require.NoError(t, err)
 		release()
 		require.Empty(t, proxy)
-		require.Equal(t, seed.State, h.Get(openAICodexTurnStateHeader))
+		require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
 		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
 		require.Equal(t, "Bearer target-token", h.Get("Authorization"))
 	}
@@ -493,30 +493,22 @@ func TestUnifiedAstraForwardingWearsCandyTicketWithoutProbing(t *testing.T) {
 			borrowed = append(borrowed, event)
 		}
 	}
-	require.Len(t, borrowed, 3)
-	for _, event := range borrowed {
-		require.Equal(t, "ticket", event.Stage)
-		require.Equal(t, int64(2), event.AccountID)
-		require.Equal(t, "#1", event.Detail)
-		require.Equal(t, "gpt-6-astra", event.Model)
-		require.Equal(t, "candy_passed", event.Result)
-		require.Equal(t, "chat.gateway.unified-42.api.openai.com", event.Node)
-	}
+	require.Empty(t, borrowed)
 	source, _ := repo.GetByID(t.Context(), 1)
 	sourceReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
 	require.NoError(t, err)
 	sourceReq.Header.Set("Authorization", "Bearer source-token")
 	sourceReq.Header.Set("ChatGPT-Account-ID", "source-workspace")
 	require.NoError(t, s.applyOpenAICodexTicket(t.Context(), source, "gpt-6-astra", sourceReq.Header))
-	require.Equal(t, seed.State, sourceReq.Header.Get(openAICodexTurnStateHeader))
+	require.Empty(t, sourceReq.Header.Get(openAICodexTurnStateHeader))
 	s.astraCandyVerdicts = nil
-	require.True(t, s.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
+	require.False(t, s.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
 	h := targetTicketHeaders()
-	before := h.Clone()
 	_, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
-	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.NoError(t, err)
 	release()
-	require.Equal(t, before, h)
+	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
 	require.Equal(t, 1, calls)
 }
 
@@ -542,8 +534,8 @@ func TestUnifiedAstraLendsSolTicketWithoutHarvestEgress(t *testing.T) {
 		calls++
 		require.Equal(t, "http://account.invalid:8080", proxy)
 		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-		require.Equal(t, sol.State, req.Header.Get(openAICodexTurnStateHeader))
-		require.Equal(t, strings.Join(sol.HarvestCookies, "; "), req.Header.Get("Cookie"))
+		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
+		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	}}
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-5.6-sol"}`))

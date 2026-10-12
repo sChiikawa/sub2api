@@ -258,7 +258,7 @@ func openAIAccountProxyURL(account *Account) string {
 }
 
 func (s *OpenAIGatewayService) stickBoundCodexTicketRequest(req *http.Request, account *Account) *http.Request {
-	if req == nil {
+	if req == nil || (s != nil && s.UnifiedAstraTicketsEnabled(req.Context())) {
 		return req
 	}
 	ticket := s.boundCodexTicket(req, account)

@@ -101,6 +101,7 @@ func (s *OpenAIGatewayService) rememberStoredAstraTicket(ctx context.Context, ac
 			return
 		}
 	}
+	s.rememberGatewayCookieFrom(account.ID, account.Name, ticket.HarvestCookies, time.Now())
 	s.testAstraCandyAfterStore(ctx, account, ticket, true)
 }
 

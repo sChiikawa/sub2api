@@ -130,6 +130,7 @@ type CodexHarvestFlowSnapshot struct {
 	Accounts    []CodexHarvestFlowAccount `json:"accounts"`
 	Counts      CodexHarvestFlowCounts    `json:"counts"`
 	Events      []CodexHarvestFlowEvent   `json:"events"`
+	Gateways    []AstraGatewayPoolEntry   `json:"gateways"`
 	Runtime     *CodexHarvestRuntime      `json:"runtime,omitempty"`
 }
 
@@ -297,9 +298,46 @@ func (s *OpenAIGatewayService) noteObservedGatewayCookie(account *Account, model
 	s.noteObservedGatewayCookies(account, model, responseCookiePairs(resp), resp.StatusCode)
 }
 
+func openAIRequestModel(req *http.Request) string {
+	if req == nil || req.GetBody == nil {
+		return ""
+	}
+	body, err := req.GetBody()
+	if err != nil || body == nil {
+		return ""
+	}
+	defer func() { _ = body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	return extractOpenAICodexTicketModel(raw)
+}
+
+func (s *OpenAIGatewayService) noteBusinessGatewayCookie(account *Account, model string, resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	s.noteGatewayCookies(account, model, responseCookiePairs(resp), resp.StatusCode, false)
+}
+
 func (s *OpenAIGatewayService) noteObservedGatewayCookies(account *Account, model string, cookies []string, httpStatus int) {
+	s.noteGatewayCookies(account, model, cookies, httpStatus, true)
+}
+
+func (s *OpenAIGatewayService) noteGatewayCookies(account *Account, model string, cookies []string, httpStatus int, alwaysLog bool) {
 	host := codex780CookieGatewayHost(cookies)
 	if host == "" {
+		return
+	}
+	var accountID int64
+	var accountName string
+	if account != nil {
+		accountID = account.ID
+		accountName = account.Name
+	}
+	saved := s.rememberGatewayCookieFrom(accountID, accountName, cookies, time.Now())
+	if !alwaysLog && !saved {
 		return
 	}
 	event := CodexHarvestFlowEvent{

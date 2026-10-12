@@ -33,7 +33,11 @@ func (h *AccountHandler) GetCodexHarvestFlow(c *gin.Context) {
 		}
 		accounts = listed
 	}
-	response.Success(c, service.BuildCodexHarvestFlow(ctx, h.cfg, h.codexTicketSettings, accounts, h.codexHarvest))
+	snapshot := service.BuildCodexHarvestFlow(ctx, h.cfg, h.codexTicketSettings, accounts, h.codexHarvest)
+	if h.openAIGatewayService != nil {
+		snapshot.Gateways = h.openAIGatewayService.CollectedAstraGateways()
+	}
+	response.Success(c, snapshot)
 }
 
 // SetCodexSkipHarvest stops background ticket probes for this account.
