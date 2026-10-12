@@ -47,16 +47,6 @@ func TestAstraAutomaticSetupFailureAndDisable(t *testing.T) {
 	svc.astraSetupMu.Unlock()
 }
 
-func TestAstraSetupRequiresAllTargetsOnCurrentRoutes(t *testing.T) {
-	provider := &astraSetupUpstream{snapshot: AstraGatewayRuntime{Targets: []AstraRouteStatus{{AccountID: 300, State: "waiting"}, {AccountID: 301, State: "ready"}}}}
-	id, ready := astraTargetsReady(t.Context(), provider, []int64{300, 301})
-	require.False(t, ready)
-	require.Equal(t, int64(300), id)
-	provider.snapshot.Targets[0].State = "ready"
-	_, ready = astraTargetsReady(t.Context(), provider, []int64{300, 301})
-	require.True(t, ready)
-}
-
 func TestAstraSetupWaitsForConcurrentPreparation(t *testing.T) {
 	calls := 0
 	provider := &astraSetupUpstream{prepare: func(context.Context) error {

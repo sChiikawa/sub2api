@@ -267,7 +267,7 @@ const filteredEvents = computed(() => {
   const events = snapshot.value?.events || []
   if (eventFilter.value === 'all') return events
   if (eventFilter.value === 'shape') {
-    return events.filter((event: CodexHarvestFlowEvent) => event.stage === 'probe' || event.kind === 'accept' || event.kind === 'reject')
+    return events.filter((event: CodexHarvestFlowEvent) => event.stage === 'probe' || event.kind === 'accept' || event.kind === 'borrow' || event.kind === 'reject')
   }
   return events.filter((event: CodexHarvestFlowEvent) => event.stage === eventFilter.value)
 })
@@ -330,7 +330,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -368,6 +368,10 @@ function resultLabel(result?: string) {
 
 function eventDetail(event: CodexHarvestFlowEvent) {
   if (event.kind === 'reject') return t('admin.harvestFlow.ticketRejected')
+  if (event.kind === 'borrow') {
+    const id = Number(/^#(\d+)$/.exec(event.detail || '')?.[1])
+    return t('admin.harvestFlow.borrowedFrom', { source: id && accountNames.value[id] ? `#${id} ${accountNames.value[id]}` : event.detail || '—' })
+  }
   if (event.kind === 'probe_hit') {
     return event.reason === 'probe_verified' ? t('admin.harvestFlow.probeVerified') : t('admin.harvestFlow.probeIncomplete')
   }

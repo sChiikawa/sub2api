@@ -14,6 +14,7 @@ import (
 // This preserves concurrently refreshed tokens, account flags, group bindings,
 // proxy assignments, cooldowns and existing mappings for other models.
 func (r *settingRepository) SetAstraRoutingWithAccounts(ctx context.Context, key string, value config.AstraRoutingSettings) error {
+	value = value.Configured()
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return err
@@ -28,13 +29,10 @@ func (r *settingRepository) SetAstraRoutingWithAccounts(ctx context.Context, key
 		}
 	}
 
+	// Targets and WS members are derived, so only sources are prepared here.
 	ids := []int64{}
 	if value.CookiePool.Enabled {
 		ids = append(ids, value.CookiePool.SourceAccountIDs...)
-		ids = append(ids, value.CookiePool.TargetAccountIDs...)
-	}
-	if value.WSSession.Enabled {
-		ids = append(ids, value.WSSession.AccountIDs...)
 	}
 	rows, readErr := tx.Client().QueryContext(ctx, `SELECT value FROM settings WHERE key=$1`, key)
 	if readErr != nil {
@@ -59,7 +57,6 @@ func (r *settingRepository) SetAstraRoutingWithAccounts(ctx context.Context, key
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
 	for _, id := range ids {
-		ws := value.WSSession.Enabled && slices.Contains(value.WSSession.AccountIDs, id)
 		// Reject malformed model mappings rather than replacing an administrator's
 		// unknown data. Empty mappings keep their existing allow-all semantics.
 		result, updateErr := tx.Client().ExecContext(ctx, `UPDATE accounts SET
@@ -67,10 +64,9 @@ func (r *settingRepository) SetAstraRoutingWithAccounts(ctx context.Context, key
     WHEN COALESCE(extra->>'astra_model_disabled','false')='true' THEN credentials
     WHEN credentials->'model_mapping' IS NULL OR credentials->'model_mapping'='null'::jsonb OR credentials->'model_mapping'='{}'::jsonb THEN credentials
     ELSE jsonb_set(credentials,'{model_mapping}',(credentials->'model_mapping') || '{"gpt-6-astra":"gpt-6-astra"}'::jsonb) END,
-   extra=COALESCE(extra,'{}'::jsonb) || CASE WHEN $2 THEN '{"openai_oauth_responses_websockets_v2_enabled":true,"openai_oauth_responses_websockets_v2_mode":"ctx_pool","openai_ws_force_http":false}'::jsonb ELSE '{}'::jsonb END,
    updated_at=NOW()
    WHERE id=$1 AND deleted_at IS NULL AND platform='openai' AND type IN ('oauth','setup-token') AND parent_account_id IS NULL
-    AND (credentials->'model_mapping' IS NULL OR credentials->'model_mapping'='null'::jsonb OR jsonb_typeof(credentials->'model_mapping')='object')`, id, ws)
+    AND (credentials->'model_mapping' IS NULL OR credentials->'model_mapping'='null'::jsonb OR jsonb_typeof(credentials->'model_mapping')='object')`, id)
 		if updateErr != nil {
 			return updateErr
 		}

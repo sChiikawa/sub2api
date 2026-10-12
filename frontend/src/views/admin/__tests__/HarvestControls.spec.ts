@@ -80,37 +80,16 @@ describe('Harvest controls draft and request ordering', () => {
     expect(wrapper.get(selector('save-controls')).attributes('disabled')).toBeDefined()
   })
 
-  it('saves the ticket-first scheduling switch, which defaults off', async () => {
+  it('no longer offers live ticket-first scheduling', async () => {
     api.save.mockImplementation(async settings => settings)
     wrapper = mount(HarvestControlsPanel)
     await flushPromises()
-    expect(input(wrapper, 'ticket-first-toggle').checked).toBe(false)
-    await wrapper.get(selector('ticket-first-toggle')).setValue(true)
-    expect(wrapper.text()).toContain('admin.harvestFlow.controls.unsaved')
+    expect(wrapper.find(selector('ticket-first-toggle')).exists()).toBe(false)
+    expect(wrapper.find(selector('ticket-first-stats')).exists()).toBe(false)
+    await wrapper.get(selector('memory-toggle')).setValue(true)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ ticket_first_scheduling: true }))
-    expect(input(wrapper, 'ticket-first-toggle').checked).toBe(true)
-  })
-
-  it('shows ticket-first stats only once the switch is saved on or traffic was counted', async () => {
-    const data = snapshot()
-    data.runtime.ticket_first = { window_minutes: 60, ticketed: 0, ticketless: 0, migrated: 0 }
-    api.getControls.mockResolvedValue(data)
-    wrapper = mount(HarvestControlsPanel)
-    await flushPromises()
-    expect(wrapper.find(selector('ticket-first-stats')).exists()).toBe(false)
-
-    const enabled = snapshot()
-    enabled.settings.ticket_first_scheduling = true
-    enabled.runtime.ticket_first = { window_minutes: 60, ticketed: 12, ticketless: 3, migrated: 4 }
-    api.getControls.mockResolvedValue(enabled)
-    await wrapper.setProps({ refreshKey: 'enabled' })
-    await flushPromises()
-    const stats = wrapper.get(selector('ticket-first-stats')).text()
-    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.ticketed 12')
-    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.migrated 4')
-    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.ticketless 3')
+    expect(api.save.mock.calls[0][0]).not.toHaveProperty('ticket_first_scheduling')
   })
 
   it('keeps an edited draft across automatic refreshes', async () => {

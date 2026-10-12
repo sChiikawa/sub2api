@@ -64,7 +64,17 @@ func (s AstraRoutingSettings) EffectiveSchedulingMode() string {
 	}
 	return s.SchedulingMode
 }
+
+// Configured drops the member lists that are derived from account state, so
+// membership changes neither count as configuration changes nor get persisted.
+func (s AstraRoutingSettings) Configured() AstraRoutingSettings {
+	s.CookiePool.TargetAccountIDs = nil
+	s.WSSession.AccountIDs = nil
+	return s
+}
+
 func AstraRouteSettingsEqual(a, b AstraRoutingSettings) bool {
+	a, b = a.Configured(), b.Configured()
 	a.AccountScheduling, b.AccountScheduling = false, false
 	a.TicketPoolScheduling, b.TicketPoolScheduling = false, false
 	a.SchedulingMode, b.SchedulingMode = "", ""

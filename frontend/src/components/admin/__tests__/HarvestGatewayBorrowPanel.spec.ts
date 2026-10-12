@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import HarvestGatewayBorrowPanel from '../HarvestGatewayBorrowPanel.vue'
+import AstraAccountPicker from '../AstraAccountPicker.vue'
 import { normalizeAstraGateway } from '@/api/admin/astraGateway'
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), list: vi.fn() }))
 vi.mock('@/api/admin/astraGateway', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/astraGateway')>(), getAstraGateway: mocks.get, saveAstraGateway: mocks.save }))
@@ -99,11 +100,37 @@ describe('Astra gateway configuration', () => {
     expect(w.get('[data-testid="rotation-toggle"]').attributes('aria-checked')).toBe('false')
     w.unmount()
   })
-  it('blocks overlapping source and target selections', async () => {
-    const data = value(); data.cookie_pool.enabled = true; data.cookie_pool.target_account_ids = [299]; mocks.get.mockResolvedValue(data)
+  it('shows derived borrowers and WS participants instead of pickers', async () => {
+    const data = value(); data.cookie_pool.enabled = true; data.ws_session.enabled = true; data.ws_session.account_ids = [299, 300]; mocks.get.mockResolvedValue(data)
     const w = render(); await flushPromises()
-    expect(w.text()).toContain('admin.astraGateway.overlap')
+    expect(w.findAllComponents(AstraAccountPicker)).toHaveLength(1)
+    expect(w.get('[data-testid="auto-targets"]').text()).toContain('target')
+    expect(w.get('[data-testid="auto-targets"]').text()).not.toContain('source')
+    expect(w.get('[data-testid="auto-ws"]').text()).toContain('source, target')
+    expect(w.get('[data-testid="borrow-summary"]').text()).toContain('admin.astraGateway.wsSummary')
+    w.unmount()
+  })
+  it('explains that members appear after the pool is enabled and saved', async () => {
+    const data = value(); data.cookie_pool.target_account_ids = []; data.ws_session.account_ids = []; mocks.get.mockResolvedValue(data)
+    const w = render(); await flushPromises()
+    expect(w.get('[data-testid="auto-targets"]').text()).toContain('admin.astraGateway.autoAfterSave')
+    expect(w.get('[data-testid="auto-ws"]').text()).toContain('admin.astraGateway.autoAfterSave')
+    expect(w.get('[data-testid="borrow-summary"]').text()).not.toContain('admin.astraGateway.wsSummary')
+    w.unmount()
+  })
+  it('requires only source accounts to enable the pool', async () => {
+    const data = value(); data.cookie_pool.enabled = true; data.cookie_pool.source_account_ids = []; data.cookie_pool.target_account_ids = []; mocks.get.mockResolvedValue(data)
+    const w = render(); await flushPromises()
+    expect(w.text()).toContain('admin.astraGateway.chooseSources')
     await w.get('form').trigger('submit'); expect(mocks.save).not.toHaveBeenCalled(); w.unmount()
+
+    const ready = value(); ready.cookie_pool.target_account_ids = []; mocks.get.mockResolvedValue(ready)
+    const next = render(); await flushPromises()
+    await next.get('[data-testid="cookie-toggle"]').trigger('click')
+    expect(next.text()).not.toContain('admin.astraGateway.chooseSources')
+    await next.get('form').trigger('submit'); await flushPromises()
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ cookie_pool: expect.objectContaining({ enabled: true, source_account_ids: [299] }) }))
+    next.unmount()
   })
   it('keeps edits on failed save and supports discard', async () => {
     mocks.save.mockRejectedValue(new Error('offline'))

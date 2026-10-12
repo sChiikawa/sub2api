@@ -312,6 +312,9 @@ func ProvideAccountTestService(
 		p.SetAstraGatewayPreparer(service.prepareAstraGatewaySource)
 	}
 	settingService.SetAstraRoutingOnSaved(service.StartAstraAutomaticSetup)
+	settingService.SetAstraAccountLister(func(ctx context.Context) ([]Account, error) {
+		return accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	})
 	if recorder, ok := httpUpstream.(AstraGatewayHistoryRecorder); ok {
 		if history, ok := settingService.settingRepo.(AstraGatewayHistoryRepository); ok {
 			recorder.SetAstraGatewayHistoryRecorder(func(row AstraGatewayHistoryRecord, passed bool) {

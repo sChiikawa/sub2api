@@ -198,20 +198,9 @@ func (s *AccountTestService) TestAstraGateway(ctx context.Context, action string
 		if !ok {
 			return result, errors.New("runtime_unavailable")
 		}
+		// Targets are every other harvest-scope account and borrow during
+		// harvest rounds; probing all of them here would be an unbounded burst.
 		err = provider.PrepareAstraGateway(ctx)
-		if err == nil {
-			for _, target := range settings.CookiePool.TargetAccountIDs {
-				err = s.verifyAstraGatewayTarget(ctx, target)
-				if err != nil {
-					break
-				}
-			}
-		}
-		if err == nil {
-			if _, ready := astraTargetsReady(ctx, provider, settings.CookiePool.TargetAccountIDs); !ready {
-				err = errors.New("target_not_verified")
-			}
-		}
 	case "verify":
 		if !settings.CookiePool.Enabled || !slices.Contains(settings.CookiePool.TargetAccountIDs, id) {
 			return result, errors.New("target_not_configured")

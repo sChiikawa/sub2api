@@ -14,14 +14,18 @@ import (
 
 type astraCandySkipObservationKey struct{}
 
-// Observe after the business stream releases its exit. No verdict is returned
-// to routing, ticket observation, account state or scheduling. Capacity pressure
-// drops this optional beta observation instead of delaying a business request.
+// Observe after the business stream releases its exit. The verdict only feeds
+// source-ticket lending; routing, ticket observation, account state and
+// scheduling never see it. Capacity pressure drops this optional beta
+// observation instead of delaying a business request.
 func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, headers http.Header, account *Account, ticket *openAICodexTicket) {
 	if skip, _ := ctx.Value(astraCandySkipObservationKey{}).(bool); skip {
 		return
 	}
 	if s.settingService == nil || account == nil || ticket == nil || ticket.Model != OpenAICodexStateProbeDefaultModel || ticket.Length != 780 || ticket.Transport != "sse" || !ticket.valid(time.Now(), 780) || IsOpenAICodexStateProbeRequest(ctx) {
+		return
+	}
+	if _, tested := s.astraCandyVerdictFor(account.ID, ticket); tested {
 		return
 	}
 	copy := *ticket
@@ -61,6 +65,7 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 			return
 		}
 		reason := s.runScheduledAstraCandy(probeCtx, h, id, &copy)
+		s.recordAstraCandyVerdict(id, &copy, reason)
 		kind := "candy_fail"
 		if reason == "candy_passed" {
 			kind = "candy_pass"
@@ -69,11 +74,16 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 	}()
 }
 
+func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket) string {
+	return s.runAstraCandy(ctx, headers, id, ticket, s.settingService.CodexTicketCandyObservation)
+}
+
 // Exactly one SSE request with the captured account/ticket/cookies and its own
 // lease for the recorded exit. Never pass the result through ticket response
-// observation, cooldown handling, harvest persistence or failover.
-func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket) string {
-	if !s.settingService.CodexTicketCandyObservation(ctx) {
+// observation, cooldown handling, harvest persistence or failover. enabled is
+// checked again after waiting for the exit lease.
+func (s *OpenAIGatewayService) runAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket, enabled func(context.Context) bool) string {
+	if !enabled(ctx) {
 		return "candy_disabled"
 	}
 	if s.accountRepo == nil || s.httpUpstream == nil {
@@ -89,7 +99,7 @@ func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, heade
 		return "candy_unavailable"
 	}
 	defer release()
-	if !s.settingService.CodexTicketCandyObservation(ctx) {
+	if !enabled(ctx) {
 		return "candy_disabled"
 	}
 	if !ticket.valid(time.Now(), 780) {

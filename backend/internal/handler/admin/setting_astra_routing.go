@@ -8,7 +8,7 @@ import (
 )
 
 func (h *SettingHandler) GetAstraRouting(c *gin.Context) {
-	value, err := h.settingService.GetAstraRouting(c.Request.Context())
+	value, err := h.settingService.GetAstraRoutingWithMembers(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

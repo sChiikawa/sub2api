@@ -80,9 +80,6 @@ export async function testAstraGateway(action: 'prepare' | 'verify' | 'ws', acco
 export function resolveAstraDependencies(value: AstraGatewaySettings): AstraGatewaySettings {
   const next = normalizeAstraGateway(value)
   if (next.cookie_pool.rotate_nodes) next.cookie_pool.ip_affinity = true
-  if (next.ws_session.enabled) {
-    next.cookie_pool.enabled = true
-    next.cookie_pool.target_account_ids = [...new Set([...next.cookie_pool.target_account_ids, ...next.ws_session.account_ids.filter(id => !next.cookie_pool.source_account_ids.includes(id))])]
-  }
+  if (next.ws_session.enabled) next.cookie_pool.enabled = true
   return next
 }

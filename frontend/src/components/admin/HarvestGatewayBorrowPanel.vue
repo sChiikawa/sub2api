@@ -9,7 +9,7 @@
           <span v-if="dirty && draft" class="text-xs text-amber-600">{{ t(`${p}.unsaved`) }}</span>
         </div>
         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t(`${p}.borrowDescription`) }}</p>
-        <p v-if="saved" class="mt-2 text-xs text-gray-400">{{ t(`${p}.borrowSummary`, { sources: saved.cookie_pool.source_account_ids.length, targets: saved.cookie_pool.target_account_ids.length }) }}</p>
+        <p v-if="saved" data-testid="borrow-summary" class="mt-2 text-xs text-gray-400">{{ t(`${p}.borrowSummary`, { sources: saved.cookie_pool.source_account_ids.length, targets: saved.cookie_pool.target_account_ids.length }) }}<template v-if="saved.ws_session.enabled">{{ t(`${p}.wsSummary`, { n: saved.ws_session.account_ids.length }) }}</template></p>
         <p v-if="error && !expanded" role="alert" class="mt-2 text-sm text-red-600">{{ error }}</p>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" data-testid="expand-borrow" :aria-expanded="expanded" aria-controls="gateway-borrow-content" @click="expanded = !expanded">{{ t(expanded ? `${p}.collapse` : `${p}.expand`) }}</button>
@@ -43,7 +43,11 @@
             <p class="mt-3 text-xs text-gray-500">{{ t(`${p}.savedState`) }}：{{ t(saved?.cookie_pool.enabled ? `${p}.enabled` : `${p}.disabled`) }}</p>
             <div class="mt-5 grid gap-4 md:grid-cols-2">
               <AstraAccountPicker v-model="draft.cookie_pool.source_account_ids" :label="t(`${p}.sources`)" :accounts="accounts" :disabled="saving" />
-              <AstraAccountPicker v-model="draft.cookie_pool.target_account_ids" :label="t(`${p}.targets`)" :accounts="accounts" :disabled="saving" />
+              <div data-testid="auto-targets" class="rounded-lg border border-dashed border-gray-200 p-4 dark:border-dark-600">
+                <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t(`${p}.autoTargets`, { n: saved?.cookie_pool.target_account_ids.length ?? 0 }) }}</p>
+                <p class="mt-1 text-xs leading-6 text-gray-500 dark:text-gray-400">{{ t(`${p}.autoTargetsHint`) }}</p>
+                <p class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ memberNames(saved?.cookie_pool.target_account_ids) || t(saved?.cookie_pool.enabled ? `${p}.autoTargetsEmpty` : `${p}.autoAfterSave`) }}</p>
+              </div>
             </div>
             <div class="mt-4 flex items-start justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-600">
               <div>
@@ -73,7 +77,11 @@
               <Toggle v-model="draft.ws_session.enabled" data-testid="ws-toggle" :aria-label="t(`${p}.wsTitle`)" />
             </div>
             <p class="mt-3 text-xs text-gray-500">{{ t(`${p}.savedState`) }}：{{ t(saved?.ws_session.enabled ? `${p}.enabled` : `${p}.disabled`) }}</p>
-            <div class="mt-5"><AstraAccountPicker v-model="draft.ws_session.account_ids" :label="t(`${p}.wsAccounts`)" :accounts="accounts" :disabled="saving" /></div>
+            <div data-testid="auto-ws" class="mt-5 rounded-lg border border-dashed border-gray-200 p-4 dark:border-dark-600">
+              <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t(`${p}.autoWS`, { n: saved?.ws_session.account_ids.length ?? 0 }) }}</p>
+              <p class="mt-1 text-xs leading-6 text-gray-500 dark:text-gray-400">{{ t(`${p}.autoWSHint`) }}</p>
+              <p class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ memberNames(saved?.ws_session.account_ids) || t(saved?.ws_session.enabled ? `${p}.autoWSEmpty` : `${p}.autoAfterSave`) }}</p>
+            </div>
             <label class="mt-4 flex items-center gap-3 text-sm">{{ t(`${p}.wsTTL`) }}<input v-model.number="draft.ws_session.ttl_seconds" class="input w-28" type="number" min="60" max="3600" required /> s</label>
             <p class="mt-4 text-xs leading-6 text-gray-500 dark:text-gray-400">{{ t(`${p}.wsHint`) }}</p>
           </section>
@@ -113,6 +121,7 @@ const error = ref('')
 const saved = ref<AstraGatewaySettings>()
 const draft = ref<AstraGatewaySettings>()
 const accounts = ref<{ id: number; name: string }[]>([])
+const accountNames = computed(() => new Map(accounts.value.map(a => [a.id, a.name])))
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(saved.value))
 const validation = computed(() => {
   if (!draft.value) return ''
@@ -120,15 +129,16 @@ const validation = computed(() => {
   if (value.cookie_pool.rotate_nodes && (!Number.isInteger(draft.value.cookie_pool.node_cooldown_seconds) || draft.value.cookie_pool.node_cooldown_seconds! < 60 || draft.value.cookie_pool.node_cooldown_seconds! > 86400)) return t(`${p}.nodeCooldownInvalid`)
   if (value.cookie_pool.rotate_nodes && (!Number.isInteger(draft.value.cookie_pool.max_node_attempts) || draft.value.cookie_pool.max_node_attempts! < 1 || draft.value.cookie_pool.max_node_attempts! > 10)) return t(`${p}.nodeAttemptsInvalid`)
   if (!Number.isInteger(value.cookie_pool.ttl_seconds) || value.cookie_pool.ttl_seconds! < 30 || value.cookie_pool.ttl_seconds! > 240 || !Number.isInteger(value.ws_session.ttl_seconds) || value.ws_session.ttl_seconds! < 60 || value.ws_session.ttl_seconds! > 3600) return t(`${p}.ttlInvalid`)
-  if (value.cookie_pool.enabled) {
-    if (!value.cookie_pool.source_account_ids.length || !value.cookie_pool.target_account_ids.length) return t(`${p}.chooseBoth`)
-    if (value.cookie_pool.source_account_ids.some(id => value.cookie_pool.target_account_ids.includes(id))) return t(`${p}.overlap`)
-  }
-  if (value.ws_session.enabled && !value.ws_session.account_ids.length) return t(`${p}.chooseWS`)
-  const enabledIDs = [...(value.cookie_pool.enabled ? [...value.cookie_pool.source_account_ids, ...value.cookie_pool.target_account_ids] : []), ...(value.ws_session.enabled ? value.ws_session.account_ids : [])]
-  if (enabledIDs.some(id => !accounts.value.some(a => a.id === id))) return t(`${p}.missingAccounts`)
+  if (!value.cookie_pool.enabled) return ''
+  if (!value.cookie_pool.source_account_ids.length) return t(`${p}.chooseSources`)
+  if (value.cookie_pool.source_account_ids.some(id => !accountNames.value.has(id))) return t(`${p}.missingAccounts`)
   return ''
 })
+const memberPreview = 12
+function memberNames(ids: number[] = []) {
+  const names = ids.slice(0, memberPreview).map(id => accountNames.value.get(id) || `#${id}`).join(', ')
+  return ids.length > memberPreview ? `${names} ${t(`${p}.autoMore`, { n: ids.length })}` : names
+}
 function setAffinity(enabled: boolean) {
   if (!draft.value) return
   draft.value.cookie_pool.ip_affinity = enabled
@@ -163,7 +173,7 @@ async function save() {
     saved.value = normalizeAstraGateway(value); draft.value = normalizeAstraGateway(value); savedMessage.value = true
    } catch (err: unknown) {
     const message = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message || (err as { message?: string }).message || ''
-    error.value = message.startsWith('astra_source_required') ? t(`${p}.chooseBoth`) : message.startsWith('astra_global_ws_disabled') ? t(`${p}.globalBlocked`) : message.startsWith('astra_account_unavailable') ? t(`${p}.missingAccounts`) : t(`${p}.saveError`)
+    error.value = message.startsWith('astra_source_required') ? t(`${p}.chooseSources`) : message.startsWith('astra_global_ws_disabled') ? t(`${p}.globalBlocked`) : message.startsWith('astra_account_unavailable') ? t(`${p}.missingAccounts`) : t(`${p}.saveError`)
   }
   finally { saving.value = false }
 }

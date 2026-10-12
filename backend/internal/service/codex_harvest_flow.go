@@ -358,6 +358,10 @@ func recordCodexHarvestTicketStore(account *Account, ticket *openAICodexTicket, 
 		event.ExpectedLength = 780
 		event.ExpectedBlocks = 33
 	}
+	if ticket.Acquisition == "reuse" && ticket.SourceAccountID > 0 {
+		// The lender is recorded by ID only; the admin view resolves its name.
+		event.Kind, event.Result, event.Detail = "borrow", "reuse", fmt.Sprintf("#%d", ticket.SourceAccountID)
+	}
 	recordCodexHarvestFlow(event)
 }
 
@@ -857,7 +861,7 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			snapshot.Counts.ProbeHit++
 		case "probe_miss":
 			snapshot.Counts.ProbeMiss++
-		case "accept":
+		case "accept", "borrow":
 			snapshot.Counts.TicketAccept++
 		case "reject":
 			snapshot.Counts.TicketReject++
@@ -969,7 +973,7 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 		if event.Kind == "reject" && snapshot.Counts.TicketsReady == 0 {
 			ticket.Status = "fail"
 			ticket.Detail = "response rejected"
-		} else if event.Kind == "accept" && snapshot.Counts.TicketsReady == 0 && ticket.Status != "fail" {
+		} else if (event.Kind == "accept" || event.Kind == "borrow") && snapshot.Counts.TicketsReady == 0 && ticket.Status != "fail" {
 			ticket.Status = "warn"
 			ticket.Detail = "no valid ticket"
 		}

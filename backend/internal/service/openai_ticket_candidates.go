@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// Ticket admission and ticket-first ordering need credentials and persisted
-// tickets that sched:meta deliberately omits. Hydrate only gated candidates,
-// before TopK filtering; looking solely at the metadata would reject even a
-// valid warm-memory ticket because its identity cannot match the stripped
+// Fail-closed ticket admission needs credentials and persisted tickets that
+// sched:meta deliberately omits. Hydrate only gated candidates, before TopK
+// filtering; looking solely at the metadata would reject even a valid
+// warm-memory ticket because its identity cannot match the stripped
 // credentials.
 func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	ctx context.Context, groupID *int64, platform, requestedModel string,
@@ -21,8 +21,7 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	if !s.openAICodexTicketEnabledContext(ctx) {
 		return accounts, nil
 	}
-	failClosed := s.openAICodexTicketConfig().FailClosed
-	if !failClosed && !s.openAICodexTicketFirstEnabled(ctx) {
+	if !s.openAICodexTicketConfig().FailClosed {
 		return accounts, nil
 	}
 	ids := make([]int64, 0, len(accounts))
@@ -49,10 +48,6 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	}
 	full, err := s.schedulerSnapshot.GetAccounts(ctx, ids)
 	if err != nil {
-		if !failClosed {
-			// Fail-open routing only loses the ticket-first order.
-			return accounts, nil
-		}
 		// Do not turn an unavailable authority into "no ticket", or fail open.
 		return nil, fmt.Errorf("codex ticket scheduling state unavailable: %w", err)
 	}
@@ -60,11 +55,11 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	for i := range accounts {
 		account := &accounts[i]
 		if _, needed := hydrate[account.ID]; needed {
-			if hydrated := full[account.ID]; hydrated != nil {
-				account = hydrated
-			} else if failClosed {
+			hydrated := full[account.ID]
+			if hydrated == nil {
 				continue
 			}
+			account = hydrated
 			if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 				continue
 			}

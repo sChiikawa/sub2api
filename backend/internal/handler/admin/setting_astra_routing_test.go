@@ -46,11 +46,13 @@ func TestAstraGatewayHandlerRoundTrip(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, 200, w.Code)
 	require.True(t, cfg.AstraRouting(t.Context()).CookiePool.Enabled)
+	require.NotContains(t, repo.value, "300", "borrowers are derived, never stored")
 	before := repo.value
-	req = httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"cookie_pool":{"enabled":true,"source_account_ids":[299],"target_account_ids":[299]}}`))
+	req = httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"cookie_pool":{"enabled":true,"source_account_ids":[],"target_account_ids":[300]}}`))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, 400, w.Code)
+	require.Contains(t, w.Body.String(), "astra_source_required")
 	require.Equal(t, before, repo.value)
 }

@@ -247,10 +247,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// HTTP SSE may opt into the native WS pool on ordinary OAuth accounts.
 	wsDecision = s.resolveOpenAIHTTPWSSSEDecision(c, account, body, wsDecision)
 	accelerateHTTPSSE := wsDecision.Reason == openAIOAuthWSSSEAccelerationReason
-	anchorCtx, anchorFinish, anchorErr := s.prepareCodexWSAnchor(ctx, c, account, body)
-	if anchorErr != nil {
-		return nil, anchorErr
-	}
+	anchorCtx, anchorFinish := s.prepareCodexWSAnchor(ctx, c, account, body)
 	if anchorFinish != nil {
 		ctx = anchorCtx
 		defer func() { anchorFinish(result, resultErr) }()

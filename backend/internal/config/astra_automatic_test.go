@@ -6,13 +6,16 @@ import (
 )
 
 func TestAstraAutomaticDependencies(t *testing.T) {
-	v := AstraRoutingSettings{CookiePool: CodexGatewayPinConfig{SourceAccountIDs: []int64{299}}, WSSession: CodexWSAnchorConfig{Enabled: true, AccountIDs: []int64{299, 300}}}
+	v := AstraRoutingSettings{CookiePool: CodexGatewayPinConfig{SourceAccountIDs: []int64{299}, TargetAccountIDs: []int64{301}}, WSSession: CodexWSAnchorConfig{Enabled: true, AccountIDs: []int64{299, 300}}}
 	resolved, err := ResolveAstraDependencies(v)
 	require.NoError(t, err)
 	require.True(t, resolved.CookiePool.Enabled)
-	require.Equal(t, []int64{300}, resolved.CookiePool.TargetAccountIDs)
+	require.Nil(t, resolved.CookiePool.TargetAccountIDs, "derived members are never persisted")
+	require.Nil(t, resolved.WSSession.AccountIDs)
 	require.False(t, v.CookiePool.Enabled)
-	require.Empty(t, v.CookiePool.TargetAccountIDs)
+	require.Equal(t, []int64{301}, v.CookiePool.TargetAccountIDs)
+	resolved.CookiePool.TargetAccountIDs = []int64{1, 2}
+	require.True(t, AstraRouteSettingsEqual(resolved, resolved.Configured()), "membership is not configuration")
 	resolved.CookiePool.SourceAccountIDs[0] = 1
 	require.Equal(t, int64(299), v.CookiePool.SourceAccountIDs[0])
 	v.CookiePool.SourceAccountIDs = nil

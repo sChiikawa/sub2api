@@ -113,25 +113,6 @@ func (s *AccountTestService) StopAstraAutomaticSetup() {
 	}
 }
 
-// A later target may reject and rotate away from an earlier target's route.
-// Only report setup success when all selected targets still match current routes.
-func astraTargetsReady(ctx context.Context, provider AstraGatewayRuntimeProvider, ids []int64) (int64, bool) {
-	snapshot := provider.AstraGatewaySnapshot(ctx)
-	for _, id := range ids {
-		ready := false
-		for _, row := range snapshot.Targets {
-			if row.AccountID == id && row.State == "ready" {
-				ready = true
-				break
-			}
-		}
-		if !ready {
-			return id, false
-		}
-	}
-	return 0, true
-}
-
 // Saving may overlap an on-demand preparation. Wait for it rather than
 // incorrectly publishing a terminal failure while the source is still running.
 func prepareAstraForSetup(ctx context.Context, provider AstraGatewayRuntimeProvider) error {

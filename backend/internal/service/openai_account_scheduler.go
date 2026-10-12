@@ -93,8 +93,6 @@ type OpenAIAccountScheduleRequest struct {
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
 	ExcludedIDs    map[int64]struct{}
-
-	ticketFirstTrace *openAICodexTicketFirstTrace
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -1181,7 +1179,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 					}
 					others = append(others, candidate.account)
 				}
-				skipSessionSticky = stickyAcc != nil && s.service.openAICodexTicketShouldYieldStickyTo(req.ticketFirstTrace, stickyAcc, others, req.RequestedModel, req.RequireCompact, req.ExcludedIDs)
+				skipSessionSticky = stickyAcc != nil && s.service.openAICodexTicketShouldYieldStickyTo(stickyAcc, others, req.RequestedModel, req.RequireCompact, req.ExcludedIDs)
 			}
 			for _, stickyID := range []int64{req.StickyPreviousAccountID, req.StickyAccountID} {
 				if stickyID <= 0 {
@@ -1225,36 +1223,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		return append(primary, overflow...)
 	}
 
-	candidateAccounts := make([]*Account, 0, len(plan.candidates))
-	for _, candidate := range plan.candidates {
-		candidateAccounts = append(candidateAccounts, candidate.account)
-	}
-	ticketDeferred := s.service.openAICodexTicketDeferredAccounts(candidateAccounts, req.RequestedModel, req.RequireCompact)
-	if req.StickyWeighted && req.StickyAccountID > 0 && ticketDeferred[req.StickyAccountID] && req.ticketFirstTrace != nil {
-		req.ticketFirstTrace.migrated.Store(true)
-	}
-	buildTicketPreferredOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-		if len(ticketDeferred) == 0 {
-			return buildSelectionOrder(pool)
-		}
-		ready := make([]openAIAccountCandidateScore, 0, len(pool))
-		deferred := make([]openAIAccountCandidateScore, 0, len(pool))
-		for _, candidate := range pool {
-			if candidate.account != nil && ticketDeferred[candidate.account.ID] {
-				deferred = append(deferred, candidate)
-			} else {
-				ready = append(ready, candidate)
-			}
-		}
-		if len(ready) == 0 || len(deferred) == 0 {
-			return buildSelectionOrder(pool)
-		}
-		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
-		ordered = append(ordered, buildSelectionOrder(ready)...)
-		ordered = append(ordered, buildSelectionOrder(deferred)...)
-		return ordered
-	}
-
 	// Excel/BPS is a per-account protocol. Once a request model has a BPS
 	// candidate, try those accounts before native Codex accounts so a pool of
 	// accounts does not randomly send the same model to /v1/responses. Native
@@ -1263,10 +1231,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	// enabled.
 	buildBPSPreferredOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		if s.service.balancesPriorityProtocols(req) {
-			return buildTicketPreferredOrder(pool)
+			return buildSelectionOrder(pool)
 		}
 		if req.Platform != PlatformOpenAI || strings.TrimSpace(req.RequestedModel) == "" || len(pool) < 2 {
-			return buildTicketPreferredOrder(pool)
+			return buildSelectionOrder(pool)
 		}
 		bps := make([]openAIAccountCandidateScore, 0, len(pool))
 		native := make([]openAIAccountCandidateScore, 0, len(pool))
@@ -1278,11 +1246,11 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		if len(bps) == 0 || len(native) == 0 {
-			return buildTicketPreferredOrder(pool)
+			return buildSelectionOrder(pool)
 		}
 		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
 		ordered = append(ordered, buildSelectionOrder(bps)...)
-		ordered = append(ordered, buildTicketPreferredOrder(native)...)
+		ordered = append(ordered, buildSelectionOrder(native)...)
 		return ordered
 	}
 
@@ -2444,12 +2412,6 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
-	ctx, ticketFirstTrace := withOpenAICodexTicketFirstTrace(ctx)
-	defer func() {
-		if err == nil && selection != nil {
-			s.recordOpenAICodexTicketFirstSelection(ctx, ticketFirstTrace, selection.Account, requestedModel, requireCompact)
-		}
-	}()
 	selection, decision, err = s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
@@ -2769,7 +2731,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequiredImageCapability: requiredImageCapability,
 		RequireCompact:          requireCompact,
 		ExcludedIDs:             excludedIDs,
-		ticketFirstTrace:        openAICodexTicketFirstTraceFrom(ctx),
 	})
 }
 
