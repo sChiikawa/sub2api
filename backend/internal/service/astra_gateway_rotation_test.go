@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,25 @@ func TestGatewayCookieIsSavedForOneHour(t *testing.T) {
 	require.Equal(t, "expired", expired[0].Status)
 	require.Equal(t, 0, expired[0].RemainingSeconds)
 	require.Empty(t, s.collectedAstraGatewaysAt(start.Add(2*time.Hour)))
+}
+
+func TestGatewayRotationCoversEveryCodexOAuthModel(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
+	s.accountRepo = &astraTicketRepo{accounts: map[int64]*Account{}}
+	s.cfg.Gateway.CodexGatewayPin.Enabled = true
+	s.rememberGatewayCookie(mint780Pair(time.Now().Add(time.Hour), "unified-9"))
+	oauth := ticketTestAccount(7)
+	req, err := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{"model":"gpt-5.4"}`))
+	require.NoError(t, err)
+	s.overlayAccountGatewayCookie(req, oauth)
+	require.Equal(t, "chat.gateway.unified-9.api.openai.com", codex780CookieGatewayHost(strings.Split(req.Header.Get("Cookie"), "; ")))
+	apiKey := ticketTestAccount(8)
+	apiKey.Type = AccountTypeAPIKey
+	plain, err := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{"model":"gpt-5.4"}`))
+	require.NoError(t, err)
+	plain.Header.Set("Cookie", "session=keep")
+	s.overlayAccountGatewayCookie(plain, apiKey)
+	require.Equal(t, "session=keep", plain.Header.Get("Cookie"))
 }
 
 func TestSameAccountKeepsOnlyTwoLatestGatewayCookies(t *testing.T) {

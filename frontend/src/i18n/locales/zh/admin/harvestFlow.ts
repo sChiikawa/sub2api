@@ -67,7 +67,7 @@ export default {
     events: '流程事件',
     accounts: '门票账号',
     gatewayPool: '已收集网关池',
-    gatewayPoolHint: '网关和路由 Cookie 默认保存 1 小时。同一个网关按账号分别保存，每个账号只留最新的两份，当前这份失效后用备用。每个账号对同一个可用网关连续使用 240 秒，全部用完后从最小编号再开始。',
+    gatewayPoolHint: '网关和路由 Cookie 默认保存 1 小时。同一个网关按账号分别保存，每个账号只留最新的两份，当前这份失效后用备用。Codex OAuth 账号的每个模型都按这个池轮换：同一个网关连续使用 240 秒，然后换下一个还没用过的，全部用完后从最小编号再开始。',
     gatewayPoolEmpty: '还没有收集到网关。打票响应的 Cookie 里出现 OpenAI 网关后，会显示在这里。',
     gatewayPoolCount: '去重 {unique} · 全部 {total}',
     gatewayCookieSaved: '路由 Cookie 已保存',

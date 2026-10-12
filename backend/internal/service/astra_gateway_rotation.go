@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -471,8 +472,21 @@ func astraRouteCookiePair(cookies []string) ([]string, string) {
 	return pair, host
 }
 
+func (s *OpenAIGatewayService) shouldRotateCodexOAuthGateway(ctx context.Context, account *Account, model string) bool {
+	if s == nil || account == nil || !account.IsOpenAIOAuth() || account.IsShadow() || !s.UnifiedAstraTicketsEnabled(ctx) {
+		return false
+	}
+	if account.isExcelBPSAllModelsEnabled() || account.isExcelBPSUpstreamModelEnabled(model) {
+		return false
+	}
+	if IsAstraSourceAcquisition(ctx) || IsOpenAICodexStateProbeRequest(ctx) {
+		return false
+	}
+	return true
+}
+
 func (s *OpenAIGatewayService) overlayAccountGatewayCookie(req *http.Request, account *Account) {
-	if s == nil || req == nil || account == nil || !s.UnifiedAstraTicketsEnabled(req.Context()) {
+	if s == nil || req == nil || account == nil {
 		return
 	}
 	raw, _ := snapshotHTTPRequestBody(req)
@@ -480,7 +494,7 @@ func (s *OpenAIGatewayService) overlayAccountGatewayCookie(req *http.Request, ac
 		replaceHTTPRequestJSONBody(req, raw)
 	}
 	model := extractOpenAICodexTicketModel(raw)
-	if !slices.Contains(s.astraBorrowModels(), model) {
+	if !s.shouldRotateCodexOAuthGateway(req.Context(), account, model) {
 		return
 	}
 	slot, _ := s.currentAccountGateway(account, model, time.Now())

@@ -67,7 +67,7 @@ export default {
     events: 'Flow events',
     accounts: 'Ticket accounts',
     gatewayPool: 'Collected gateway pool',
-    gatewayPoolHint: 'A gateway and its route cookie are kept for 1 hour. Each account keeps only its two newest cookies for the same gateway, and the other one is the backup when the current cookie expires. Each account keeps one usable gateway for 240 seconds, then moves to the next unused one and starts over after the last.',
+    gatewayPoolHint: 'A gateway and its route cookie are kept for 1 hour. Each account keeps only its two newest cookies for the same gateway, and the other one is the backup when the current cookie expires. Every model on a Codex OAuth account uses this pool: one gateway for 240 seconds, then the next unused one, and back to the smallest number after the last.',
     gatewayPoolEmpty: 'No gateways collected yet. An OpenAI gateway found in a harvest response cookie will appear here.',
     gatewayPoolCount: 'Unique {unique} · All {total}',
     gatewayCookieSaved: 'Route cookie saved',

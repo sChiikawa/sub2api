@@ -97,6 +97,9 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 		request = request.WithContext(context.WithValue(request.Context(), astraCandySkipObservationKey{}, true))
 		return gateway.doOpenAIUpstream(request, proxyURL, account)
 	}
+	if gateway != nil && gateway.shouldRotateCodexOAuthGateway(request.Context(), account, model) {
+		gateway.overlayAccountGatewayCookie(request, account)
+	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
