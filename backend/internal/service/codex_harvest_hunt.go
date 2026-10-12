@@ -128,9 +128,11 @@ func (s *OpenAIGatewayService) huntCodexHarvestTicket(ctx context.Context, accou
 			s.openaiCodexTicketProbeCooldown.Delete(openAICodexTicketKey(account.ID, model))
 			ticket := codexHarvestTicket(account, model, result, cfg, attempts)
 			bindCodexHarvestEgress(ticket, attempt, session)
-			if err := s.storeOpenAICodexTicket(ctx, account, ticket); err != nil && s.codexHarvest != nil {
+			err := s.storeOpenAICodexTicket(ctx, account, ticket)
+			if err != nil && s.codexHarvest != nil {
 				s.codexHarvest.degrade("ticket persisted in memory only; database write failed")
 			}
+			s.rememberStoredAstraTicket(ctx, account, ticket, err)
 			s.recordCodexProbe(ctx, account, model, result.Kind, result.Status)
 			logger.L().Info("openai_codex_ticket harvested", zap.Int64("account_id", account.ID), zap.String("model", model), zap.Int("attempts", attempts))
 			return

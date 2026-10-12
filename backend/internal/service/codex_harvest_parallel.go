@@ -154,7 +154,9 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 				}
 				ticket := codexHarvestTicket(account, model, r, cfg, out.attempt)
 				bindCodexHarvestEgress(ticket, codexHarvestAttempt{proxy: mihomo.Endpoint, node: mihomo.HarvestNode{ID: out.node, Name: out.node, Provider: "managed"}}, out.session)
-				if e = s.storeOpenAICodexTicket(ctx, fresh, ticket); e != nil {
+				e = s.storeOpenAICodexTicket(ctx, fresh, ticket)
+				s.rememberStoredAstraTicket(ctx, fresh, ticket, e)
+				if e != nil {
 					event.Result = "persist_failed"
 					event.Level = "WARN"
 					event.Message = "合规门票持久化失败，未计入成功"

@@ -2,7 +2,7 @@ export default {
   astraGateway: {
     probeHint: 'Reuses the two-shot ticket probe. Both short requests must complete without issuing a different continuation ticket. A new ticket, failed request, or changed route is not usable. Results describe this probe only.',
     borrowTitle: 'Astra fast reuse',
-    borrowDescription: 'Every account harvests its own ticket. A candy-passed ticket that is still valid is lent to other non-source accounts’ business requests: the account keeps its own credentials and sends that ticket’s state, route cookies and egress. Source tickets come first, then tickets other accounts harvested themselves. A borrowed ticket is not used to harvest.',
+    borrowDescription: 'Every account harvests its own ticket. A candy-passed ticket that is still valid is lent to other non-source accounts’ business requests: the account keeps its own credentials and its own configured egress, and sends that model’s state and route cookies. gpt-6-astra and gpt-5.6-sol can both be lent. Source tickets come first, then tickets other accounts harvested themselves. A borrowed ticket is not used to harvest.',
     borrowSummary: '{sources} source accounts · {targets} automatic borrowers · shared with background harvest',
     wsSummary: ' · {n} automatic pinned WS accounts',
     expand: 'Configuration and status', collapse: 'Collapse', configuration: 'Reuse and harvest configuration',
@@ -105,7 +105,7 @@ export default {
     autoMore: 'and {n} total',
     wsTitle: 'Pinned WS sessions',
     wsDescription: 'Start on WebSocket and continue on the same connection with a response ID.',
-    cookieHint: 'Harvesting does not borrow tickets; every account collects its own. Business requests wear a Beta candy-passed ticket that is still valid: source tickets first, then tickets other accounts harvested themselves. Borrowed tickets are never lent on and are not used to harvest. The account keeps its own credentials and sends that ticket’s state, route cookies and egress. An untested ticket is checked once during a harvest round, using one request from its budget. Business requests never start or wait for a probe; without a ticket to wear, the request uses the account’s own ticket or its original configuration.',
+    cookieHint: 'Harvesting does not borrow tickets; every account collects its own. Business requests wear a Beta candy-passed ticket that is still valid: source tickets first, then tickets other accounts harvested themselves. Borrowed tickets are never lent on and are not used to harvest. The account keeps its own credentials and its own configured egress, and sends that ticket’s state and route cookies. gpt-6-astra and gpt-5.6-sol are lent per model. A stored ticket is candy-checked once. Other non-source accounts can wear it on business requests only after it passes. Business requests never start or wait for a probe; without a ticket to wear, the request uses the account’s own ticket or its original configuration.',
     wsHint: 'Clients must send a stable session identity and an explicit previous_response_id. Sessions are isolated by account, user and thread and last at most one hour. Start a new first turn after a connection fails.',
     savedState: 'Saved configuration', enabled: 'Enabled', disabled: 'Disabled',
     save: 'Save configuration', saving: 'Saving…', unsaved: 'Unsaved changes', discard: 'Discard changes',

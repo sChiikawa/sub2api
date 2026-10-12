@@ -754,7 +754,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	// egress are attached when the request is sent; this only keeps admission
 	// from rejecting an account that has no ticket of its own.
 	if protocol == "sse" {
-		if shared := s.memoryCandyAstraTicket(account.ID); shared != nil {
+		if shared := s.memoryCandyAstraTicket(account.ID, model); shared != nil {
 			h.Set(openAICodexTurnStateHeader, shared.State)
 			return nil
 		}
@@ -848,7 +848,7 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
 		return false
 	}
-	return model != OpenAICodexStateProbeDefaultModel || s.memoryCandyAstraTicket(account.ID) == nil
+	return s.memoryCandyAstraTicket(account.ID, model) == nil
 }
 
 func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account, requestedModel string, requireCompact bool) bool {
@@ -871,7 +871,7 @@ func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account
 	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
 		return true
 	}
-	return model == OpenAICodexStateProbeDefaultModel && s.memoryCandyAstraTicket(account.ID) != nil
+	return s.memoryCandyAstraTicket(account.ID, model) != nil
 }
 
 func extraTruthy(value any) bool {
@@ -1286,9 +1286,14 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 			}
 			ticket := s.lookupOpenAICodexTicket(&account, model)
 			if ticket.valid(now, openAICodexTicketTargetLength(&account, cfg)) && !ticket.needsRefresh(now, refreshBefore) {
+				s.testAstraCandyAfterStore(ctx, &account, ticket, false)
+				if ticket.Standby.valid(now, 780) {
+					s.testAstraCandyAfterStore(ctx, &account, ticket.Standby, false)
+				}
 				continue
 			}
 			if ticket != nil && ticket.Standby.valid(now, openAICodexTicketTargetLength(&account, cfg)) && !ticket.Standby.needsRefresh(now, refreshBefore) {
+				s.testAstraCandyAfterStore(ctx, &account, ticket.Standby, false)
 				continue
 			}
 			acc := account

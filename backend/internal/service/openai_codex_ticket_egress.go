@@ -306,7 +306,18 @@ func (s *OpenAIGatewayService) codexTicketPinsEgress(req *http.Request, account 
 	return s.codexTicketPinsEgressFromHeader(req.Context(), req.Header, account)
 }
 
+func borrowedAstraBusinessTicket(ctx context.Context, h http.Header) bool {
+	if ctx == nil || h == nil {
+		return false
+	}
+	shared, _ := ctx.Value(sharedAstraTicketContextKey{}).(*openAICodexTicket)
+	return shared != nil && shared.State != "" && shared.State == h.Get(openAICodexTurnStateHeader)
+}
+
 func (s *OpenAIGatewayService) codexTicketPinsEgressFromHeader(ctx context.Context, h http.Header, account *Account) bool {
+	if borrowedAstraBusinessTicket(ctx, h) {
+		return false
+	}
 	ticket := s.boundCodexTicketFromHeader(ctx, h, account)
 	if ticket == nil {
 		return false
@@ -331,6 +342,9 @@ func (s *OpenAIGatewayService) pinCodexTicketWSAcquire(ctx context.Context, head
 
 func (s *OpenAIGatewayService) pinCodexTicketEgressFromHeader(ctx context.Context, h http.Header, account *Account, proxyURL string) (string, func(), error) {
 	noop := func() {}
+	if borrowedAstraBusinessTicket(ctx, h) {
+		return proxyURL, noop, nil
+	}
 	ticket := s.boundCodexTicketFromHeader(ctx, h, account)
 	if ticket == nil {
 		return proxyURL, noop, nil

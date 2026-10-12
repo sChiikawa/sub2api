@@ -264,7 +264,9 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				consecutiveFails = 0
 				ticket := codexHarvestTicket(account, model, result, cfg, attempt)
 				bindCodexHarvestEgress(ticket, lease, session)
-				if storeErr := s.storeOpenAICodexTicket(ctx, account, ticket); storeErr != nil {
+				storeErr := s.storeOpenAICodexTicket(ctx, account, ticket)
+				s.rememberStoredAstraTicket(ctx, account, ticket, storeErr)
+				if storeErr != nil {
 					persistPending[model] = true
 					if s.codexHarvest != nil {
 						s.codexHarvest.degrade("ticket persisted in memory only; database write failed")

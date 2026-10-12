@@ -330,7 +330,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -368,9 +368,11 @@ function resultLabel(result?: string) {
 
 function eventDetail(event: CodexHarvestFlowEvent) {
   if (event.kind === 'reject') return t('admin.harvestFlow.ticketRejected')
-  if (event.kind === 'borrow') {
+  if (event.kind === 'borrow' || event.kind === 'business_borrow') {
     const id = Number(/^#(\d+)$/.exec(event.detail || '')?.[1])
-    return t('admin.harvestFlow.borrowedFrom', { source: id && accountNames.value[id] ? `#${id} ${accountNames.value[id]}` : event.detail || '—' })
+    const source = id && accountNames.value[id] ? `#${id} ${accountNames.value[id]}` : event.detail || '—'
+    const key = event.kind === 'business_borrow' ? 'admin.harvestFlow.borrowedForRequest' : 'admin.harvestFlow.borrowedFrom'
+    return t(key, { source, model: event.model || '—' })
   }
   if (event.kind === 'probe_hit') {
     return event.reason === 'probe_verified' ? t('admin.harvestFlow.probeVerified') : t('admin.harvestFlow.probeIncomplete')

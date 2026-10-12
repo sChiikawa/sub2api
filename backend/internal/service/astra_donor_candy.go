@@ -88,6 +88,55 @@ func (s *OpenAIGatewayService) recordAstraCandyVerdict(accountID int64, ticket *
 	s.putAstraCandyVerdictLocked(astraCandyMaterial(accountID, ticket), verdict)
 }
 
+// rememberStoredAstraTicket tests Beta candy after a ticket is accepted into
+// the store. A database persist failure still counts: the in-memory ticket can
+// be lent. A rejected ticket is left untested.
+func (s *OpenAIGatewayService) rememberStoredAstraTicket(ctx context.Context, account *Account, ticket *openAICodexTicket, err error) {
+	if s == nil || account == nil || ticket == nil {
+		return
+	}
+	if err != nil {
+		current := s.lookupOpenAICodexTicket(account, ticket.Model)
+		if current == nil || (current.State != ticket.State && (current.Standby == nil || current.Standby.State != ticket.State)) {
+			return
+		}
+	}
+	s.testAstraCandyAfterStore(ctx, account, ticket, true)
+}
+
+// testAstraCandyAfterStore spends one request on a stored SSE ticket that has
+// not been candy-checked. A pass lets every other non-source account wear it
+// on business requests until it expires. Borrowed tickets are not tested and
+// are not lent on. required keeps the check for a ticket that was just stored
+// even when this round's budget is already spent; a later round will not
+// replace a fresh ticket. A retry of an older ticket waits for the next round
+// when the budget is gone.
+func (s *OpenAIGatewayService) testAstraCandyAfterStore(ctx context.Context, account *Account, ticket *openAICodexTicket, required bool) {
+	if account == nil || ticket == nil || ticket.Acquisition == "reuse" || ctx.Err() != nil || !s.UnifiedAstraTicketsEnabled(ctx) {
+		return
+	}
+	if normalizeOpenAICodexTicketModel(ticket.Model) == "" || ticket.Length != 780 || ticket.Transport != "sse" || !ticket.ProbeVerified {
+		return
+	}
+	if _, tested := s.astraCandyVerdictFor(account.ID, ticket); tested {
+		return
+	}
+	s.checkAstraDonorCandy(ctx, account, ticket, func() bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		round, _ := ctx.Value(codexHarvestRoundKey{}).(*codexHarvestRound)
+		if round == nil {
+			return true
+		}
+		controls, _ := s.harvestControls(ctx)
+		if round.Take(controls.Speed.MaxRequestsPerRound) {
+			return true
+		}
+		return required
+	})
+}
+
 // checkAstraDonorCandy spends at most one reserved request on one untested
 // source ticket. Concurrent callers for the same ticket do not duplicate it.
 func (s *OpenAIGatewayService) checkAstraDonorCandy(ctx context.Context, account *Account, ticket *openAICodexTicket, reserve func() bool) bool {

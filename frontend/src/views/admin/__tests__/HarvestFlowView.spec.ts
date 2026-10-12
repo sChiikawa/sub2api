@@ -86,6 +86,23 @@ describe('HarvestFlowView nullable API lists', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('logs a business request that borrowed a candy-passed ticket', async () => {
+    getFlow.mockResolvedValue({ ...response(),
+      events: [
+        { id: 'use', stage: 'ticket', kind: 'business_borrow', result: 'candy_passed', detail: '#1', account_id: 2, account_name: 'borrower', model: 'gpt-6-astra' }
+      ]
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('admin.harvestFlow.borrowedForRequest #1 Test account')
+      expect(wrapper.text()).toContain('gpt-6-astra')
+      await wrapper.findAll('button').find(button => button.text() === 'admin.harvestFlow.stages.ticket')?.trigger('click')
+      expect(wrapper.findAll('ol li')).toHaveLength(1)
+      expect(wrapper.findAll('ol li .bg-emerald-500')).toHaveLength(1)
+    } finally { wrapper.unmount() }
+  })
+
   it('shows Astra pool scheduling changes in the selection flow filter', async () => {
     const data = response()
     getFlow.mockResolvedValue({ ...data,
