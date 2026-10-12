@@ -122,31 +122,59 @@
         <div class="card p-5" data-testid="gateway-pool">
           <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayPool') }}</h2>
-            <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { n: snapshot.gateways?.length || 0 }) }}</span>
+            <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { unique: gatewayUniqueCount, total: snapshot.gateways?.length || 0 }) }}</span>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.gatewayPoolHint') }}</p>
           <p v-if="!snapshot.gateways?.length" class="mt-3 text-sm text-gray-500">{{ t('admin.harvestFlow.gatewayPoolEmpty') }}</p>
           <div v-else class="mt-3 overflow-x-auto">
             <table class="min-w-full text-left text-sm">
               <tbody>
-                <tr v-for="gateway in snapshot.gateways" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-100 dark:border-dark-700">
-                  <td class="py-2 pr-3 align-middle">
-                    <span class="break-all font-mono text-xs text-gray-800 dark:text-gray-200">{{ gateway.host }}</span>
-                    <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
-                  </td>
-                  <td class="whitespace-nowrap py-2 pr-3 align-middle">
-                    <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
-                    <span v-if="gateway.role === 'backup'" class="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{{ t('admin.harvestFlow.gatewayBackup') }}</span>
-                    <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
-                  </td>
-                  <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
-                  <td class="py-2 pr-3 align-middle">
-                    <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
-                      <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
-                    </div>
-                  </td>
-                  <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
-                </tr>
+                <template v-for="group in gatewayGroups" :key="group.host">
+                  <tr v-for="gateway in group.rows" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-100 dark:border-dark-700">
+                    <td class="py-2 pr-3 align-middle">
+                      <span class="break-all font-mono text-xs text-gray-800 dark:text-gray-200">{{ gateway.host }}</span>
+                      <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
+                    </td>
+                    <td class="whitespace-nowrap py-2 pr-3 align-middle">
+                      <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
+                      <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
+                    </td>
+                    <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
+                    <td class="py-2 pr-3 align-middle">
+                      <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                        <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
+                      </div>
+                    </td>
+                    <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
+                  </tr>
+                  <tr v-if="group.backups.length" class="border-t border-gray-50 dark:border-dark-800">
+                    <td colspan="5" class="py-1.5">
+                      <button type="button" class="text-xs text-sky-700 dark:text-sky-300" data-testid="gateway-backups" :aria-expanded="!!expandedGatewayHosts[group.host]" @click="toggleGatewayBackups(group.host)">
+                        {{ expandedGatewayHosts[group.host] ? t('admin.harvestFlow.gatewayBackupsHide', { n: group.backups.length }) : t('admin.harvestFlow.gatewayBackups', { n: group.backups.length }) }}
+                      </button>
+                    </td>
+                  </tr>
+                  <template v-if="expandedGatewayHosts[group.host]">
+                    <tr v-for="gateway in group.backups" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-50 bg-gray-50/60 dark:border-dark-800 dark:bg-dark-800/40">
+                      <td class="py-2 pr-3 pl-4 align-middle">
+                        <span class="break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ gateway.host }}</span>
+                        <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
+                      </td>
+                      <td class="whitespace-nowrap py-2 pr-3 align-middle">
+                        <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
+                        <span class="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{{ t('admin.harvestFlow.gatewayBackup') }}</span>
+                        <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
+                      </td>
+                      <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
+                      <td class="py-2 pr-3 align-middle">
+                        <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                          <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
+                        </div>
+                      </td>
+                      <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
+                    </tr>
+                  </template>
+                </template>
               </tbody>
             </table>
           </div>
@@ -280,6 +308,28 @@ import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarve
 
 const { t } = useI18n()
 const snapshot = ref<CodexHarvestFlowSnapshot | null>(null)
+const expandedGatewayHosts = ref<Record<string, boolean>>({})
+const gatewayUniqueCount = computed(() => new Set((snapshot.value?.gateways || []).map(gateway => gateway.host)).size)
+const gatewayGroups = computed(() => {
+  const groups: { host: string; rows: CodexHarvestGateway[]; backups: CodexHarvestGateway[] }[] = []
+  for (const gateway of snapshot.value?.gateways || []) {
+    let group = groups.find(item => item.host === gateway.host)
+    if (!group) {
+      group = { host: gateway.host, rows: [], backups: [] }
+      groups.push(group)
+    }
+    if (gateway.role === 'backup') group.backups.push(gateway)
+    else group.rows.push(gateway)
+  }
+  for (const group of groups) {
+    if (!group.rows.length && group.backups.length) group.rows.push(group.backups.shift()!)
+  }
+  return groups
+})
+
+function toggleGatewayBackups(host: string) {
+  expandedGatewayHosts.value = { ...expandedGatewayHosts.value, [host]: !expandedGatewayHosts.value[host] }
+}
 const accountNames = computed(() => Object.fromEntries((snapshot.value?.accounts || []).map(account => [account.id, account.name])))
 const loading = ref(false)
 const refreshing = ref(false)

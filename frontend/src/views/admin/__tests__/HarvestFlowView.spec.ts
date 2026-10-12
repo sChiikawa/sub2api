@@ -98,9 +98,13 @@ describe('HarvestFlowView nullable API lists', () => {
     try {
       await flushPromises()
       const pool = wrapper.get('[data-testid="gateway-pool"]')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayPoolCount 2 3')
       expect(pool.text()).toContain('chat.gateway.unified-125.api.openai.com')
       expect(pool.text()).toContain('chat.gateway.unified-126.api.openai.com')
       expect(pool.text()).toContain('#2 bob')
+      expect(pool.text()).not.toContain('#1 alice')
+      expect(pool.text()).toContain('admin.harvestFlow.gatewayBackups')
+      await pool.get('[data-testid="gateway-backups"]').trigger('click')
       expect(pool.text()).toContain('#1 alice')
       expect(pool.text()).toContain('admin.harvestFlow.gatewayBackup')
       expect(pool.text()).toContain('admin.harvestFlow.gatewayStatusActive')
