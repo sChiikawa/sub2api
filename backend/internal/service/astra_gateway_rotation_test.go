@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +114,80 @@ func TestGatewayCookieIsSavedForOneHour(t *testing.T) {
 	require.Equal(t, "expired", expired[0].Status)
 	require.Equal(t, 0, expired[0].RemainingSeconds)
 	require.Empty(t, s.collectedAstraGatewaysAt(start.Add(2*time.Hour)))
+}
+
+type memoryGatewayPool struct {
+	slots []AstraGatewayPoolSlot
+	turns []AstraGatewayPoolTurn
+}
+
+func (m *memoryGatewayPool) ListSlots(context.Context) ([]AstraGatewayPoolSlot, error) {
+	return append([]AstraGatewayPoolSlot(nil), m.slots...), nil
+}
+func (m *memoryGatewayPool) SaveSlot(_ context.Context, slot AstraGatewayPoolSlot) error {
+	for i := range m.slots {
+		if m.slots[i].Host == slot.Host && m.slots[i].AccountID == slot.AccountID && slices.Equal(m.slots[i].Cookies, slot.Cookies) {
+			m.slots[i] = slot
+			return nil
+		}
+	}
+	m.slots = append(m.slots, slot)
+	return nil
+}
+func (m *memoryGatewayPool) DeleteSlot(_ context.Context, slot AstraGatewayPoolSlot) error {
+	kept := m.slots[:0]
+	for _, item := range m.slots {
+		if item.Host == slot.Host && item.AccountID == slot.AccountID && slices.Equal(item.Cookies, slot.Cookies) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	m.slots = kept
+	return nil
+}
+func (m *memoryGatewayPool) ListTurns(context.Context) ([]AstraGatewayPoolTurn, error) {
+	return append([]AstraGatewayPoolTurn(nil), m.turns...), nil
+}
+func (m *memoryGatewayPool) SaveTurn(_ context.Context, turn AstraGatewayPoolTurn) error {
+	for i := range m.turns {
+		if m.turns[i].AccountID == turn.AccountID {
+			m.turns[i] = turn
+			return nil
+		}
+	}
+	m.turns = append(m.turns, turn)
+	return nil
+}
+
+func TestGatewayPoolAndTurnSurviveRestart(t *testing.T) {
+	store := &memoryGatewayPool{}
+	BindAstraGatewayPoolRepository(store)
+	t.Cleanup(func() { BindAstraGatewayPoolRepository(nil) })
+	cfg := config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}
+	first := ticketTestService(t, cfg, nil)
+	first.accountRepo = &astraTicketRepo{accounts: map[int64]*Account{}}
+	first.cfg.Gateway.CodexGatewayPin.Enabled = true
+	account := ticketTestAccount(7)
+	account.Name = "rotating"
+	start := time.Now()
+	first.rememberGatewayCookieFrom(7, "rotating", mint780Pair(start.Add(2*time.Hour), "unified-15"), start)
+	slot, switched := first.currentAccountGateway(account, "gpt-5.4", start)
+	require.True(t, switched)
+	require.Equal(t, "chat.gateway.unified-15.api.openai.com", slot.Host)
+	require.Len(t, store.slots, 1)
+	require.Len(t, store.turns, 1)
+	require.NotContains(t, store.slots[0].AccountName, "__oailb")
+
+	restarted := ticketTestService(t, cfg, nil)
+	restarted.accountRepo = &astraTicketRepo{accounts: map[int64]*Account{}}
+	restarted.cfg.Gateway.CodexGatewayPin.Enabled = true
+	list := restarted.CollectedAstraGateways()
+	require.Len(t, list, 1)
+	require.Equal(t, "chat.gateway.unified-15.api.openai.com", list[0].Host)
+	require.Equal(t, int64(7), list[0].AccountID)
+	again, switched := restarted.currentAccountGateway(account, "gpt-5.4", start.Add(time.Minute))
+	require.False(t, switched)
+	require.Equal(t, slot.Host, again.Host)
 }
 
 func TestGatewayRotationCoversEveryCodexOAuthModel(t *testing.T) {

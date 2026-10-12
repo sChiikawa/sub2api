@@ -13,6 +13,7 @@ const harvestFlowPersistCap = 200
 type codexHarvestFlowRepository struct{ db *sql.DB }
 
 func NewCodexHarvestFlowRepository(db *sql.DB) service.CodexHarvestFlowRepository {
+	service.BindAstraGatewayPoolRepository(newAstraGatewayPoolRepository(db))
 	return &codexHarvestFlowRepository{db: db}
 }
 

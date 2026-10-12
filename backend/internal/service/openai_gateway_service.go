@@ -558,6 +558,7 @@ type OpenAIGatewayService struct {
 	astraGatewaySlots              map[string]astraGatewaySlot
 	astraGatewayTurns              map[int64]*astraGatewayTurn
 	astraGatewaySeeded             bool
+	astraGatewayLoaded             bool
 	openaiCodexTickets             sync.Map
 	openaiCodexTicketStateMu       sync.Mutex
 	openaiCodexTicketCursors       sync.Map // codexHarvestTier -> *atomic.Uint64

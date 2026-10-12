@@ -69,10 +69,13 @@ func (s *OpenAIGatewayService) collectedAstraGatewaysAt(now time.Time) []AstraGa
 	if s == nil {
 		return []AstraGatewayPoolEntry{}
 	}
+	s.ensureAstraGatewayStore()
 	s.seedGatewayCookiesFromTickets()
+	var removed []astraGatewaySlot
+	defer func() { deleteAstraGatewaySlots(removed) }()
 	s.astraGatewayMu.Lock()
 	defer s.astraGatewayMu.Unlock()
-	s.pruneGatewaySlotsLocked(now)
+	removed = s.pruneGatewaySlotsLocked(now)
 	best := s.bestActiveByHostLocked(now)
 	out := make([]AstraGatewayPoolEntry, 0, len(s.astraGatewaySlots))
 	for _, slot := range s.astraGatewaySlots {
@@ -137,9 +140,18 @@ func (s *OpenAIGatewayService) rememberGatewayCookieFrom(accountID int64, accoun
 	if accountID < 0 {
 		accountID = 0
 	}
+	s.ensureAstraGatewayStore()
+	var removed []astraGatewaySlot
+	var saved *astraGatewaySlot
+	defer func() {
+		if saved != nil {
+			saveAstraGatewaySlot(*saved)
+		}
+		deleteAstraGatewaySlots(removed)
+	}()
 	s.astraGatewayMu.Lock()
 	defer s.astraGatewayMu.Unlock()
-	s.pruneGatewaySlotsLocked(now)
+	removed = s.pruneGatewaySlotsLocked(now)
 	if s.astraGatewaySlots == nil {
 		s.astraGatewaySlots = map[string]astraGatewaySlot{}
 	}
@@ -155,7 +167,7 @@ func (s *OpenAIGatewayService) rememberGatewayCookieFrom(accountID int64, accoun
 		s.astraGatewaySlots[key] = existing
 		return false
 	}
-	s.astraGatewaySlots[key] = astraGatewaySlot{
+	slot := astraGatewaySlot{
 		Host:                host,
 		AccountID:           accountID,
 		AccountName:         accountName,
@@ -164,11 +176,13 @@ func (s *OpenAIGatewayService) rememberGatewayCookieFrom(accountID int64, accoun
 		ExpiresAt:           now.Add(astraGatewayCookieTTL),
 		CredentialExpiresAt: credentialExpires,
 	}
-	s.trimAccountGatewayCookiesLocked(host, accountID, key)
+	s.astraGatewaySlots[key] = slot
+	removed = append(removed, s.trimAccountGatewayCookiesLocked(host, accountID, key)...)
+	saved = &slot
 	return true
 }
 
-func (s *OpenAIGatewayService) trimAccountGatewayCookiesLocked(host string, accountID int64, keepKey string) {
+func (s *OpenAIGatewayService) trimAccountGatewayCookiesLocked(host string, accountID int64, keepKey string) []astraGatewaySlot {
 	type savedCookie struct {
 		key   string
 		saved time.Time
@@ -180,7 +194,7 @@ func (s *OpenAIGatewayService) trimAccountGatewayCookiesLocked(host string, acco
 		}
 	}
 	if len(mine) <= astraGatewayCookiesPerAccountHost {
-		return
+		return nil
 	}
 	slices.SortFunc(mine, func(a, b savedCookie) int {
 		if compared := a.saved.Compare(b.saved); compared != 0 {
@@ -194,9 +208,12 @@ func (s *OpenAIGatewayService) trimAccountGatewayCookiesLocked(host string, acco
 		}
 		return strings.Compare(a.key, b.key)
 	})
+	removed := make([]astraGatewaySlot, 0, len(mine)-astraGatewayCookiesPerAccountHost)
 	for _, old := range mine[:len(mine)-astraGatewayCookiesPerAccountHost] {
+		removed = append(removed, s.astraGatewaySlots[old.key])
 		delete(s.astraGatewaySlots, old.key)
 	}
+	return removed
 }
 
 func (s *OpenAIGatewayService) seedGatewayCookiesFromTickets() {
@@ -239,10 +256,19 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 	if s == nil || account == nil || account.ID <= 0 {
 		return nil, false
 	}
+	s.ensureAstraGatewayStore()
 	s.seedGatewayCookiesFromTickets()
+	var removed []astraGatewaySlot
+	var turnSave *AstraGatewayPoolTurn
+	defer func() {
+		deleteAstraGatewaySlots(removed)
+		if turnSave != nil {
+			saveAstraGatewayTurn(*turnSave)
+		}
+	}()
 	s.astraGatewayMu.Lock()
 	defer s.astraGatewayMu.Unlock()
-	s.pruneGatewaySlotsLocked(now)
+	removed = s.pruneGatewaySlotsLocked(now)
 	ordered := s.usableGatewaySlotsLocked(now)
 	if len(ordered) == 0 {
 		return nil, false
@@ -257,6 +283,7 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 		}
 		if slot, ok := s.bestActiveByHostLocked(now)[turn.Host]; ok {
 			turn.CookieKey = astraGatewaySlotKey(slot.Host, slot.AccountID, slot.Cookies)
+			turnSave = gatewayTurnRecord(account.ID, turn)
 			return cloneGatewaySlot(slot), false
 		}
 	}
@@ -278,6 +305,7 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 	turn.CookieKey = astraGatewaySlotKey(next.Host, next.AccountID, next.Cookies)
 	turn.Until = now.Add(astraGatewayTurnDuration)
 	turn.Used[next.Host] = struct{}{}
+	turnSave = gatewayTurnRecord(account.ID, turn)
 	recordCodexHarvestFlow(CodexHarvestFlowEvent{
 		Stage:       "probe",
 		Kind:        "gateway_turn",
@@ -291,12 +319,15 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 	return cloneGatewaySlot(*next), true
 }
 
-func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) {
+func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) []astraGatewaySlot {
+	var removed []astraGatewaySlot
 	for key, slot := range s.astraGatewaySlots {
 		if slot.ExpiresAt.IsZero() || !now.Before(slot.ExpiresAt.Add(astraGatewayCookieTTL)) {
+			removed = append(removed, slot)
 			delete(s.astraGatewaySlots, key)
 		}
 	}
+	return removed
 }
 
 func (s *OpenAIGatewayService) usableGatewaySlotsLocked(now time.Time) []astraGatewaySlot {
