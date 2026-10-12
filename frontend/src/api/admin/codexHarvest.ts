@@ -28,6 +28,14 @@ export interface CodexHarvestRuntime {
   current_node: string
   selection_reason: string
   degraded_reason: string
+  ticket_first?: CodexTicketFirstStats
+}
+
+export interface CodexTicketFirstStats {
+  window_minutes: number
+  ticketed: number
+  ticketless: number
+  migrated: number
 }
 
 export interface CodexHarvestBound {

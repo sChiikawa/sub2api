@@ -868,14 +868,53 @@ func (s *OpenAIGatewayService) openAICodexTicketFirstEnabled(ctx context.Context
 // account priority; deferred accounts only take what they cannot serve. BPS
 // and Prism routes never carry a ticket. Callers check the switch.
 func (s *OpenAIGatewayService) openAICodexTicketDeferredForRequest(account *Account, requestedModel string, requireCompact bool) bool {
+	return s.openAICodexTicketNativeGated(account, requestedModel, requireCompact) &&
+		!s.openAICodexTicketReadyForRequest(account, requestedModel, requireCompact)
+}
+
+func (s *OpenAIGatewayService) openAICodexTicketNativeGated(account *Account, requestedModel string, requireCompact bool) bool {
 	if s == nil || account == nil {
 		return false
 	}
 	outbound := s.openAICodexTicketOutboundModel(account, requestedModel, requireCompact)
-	if account.isPrismBrowserUpstreamModelEnabled(outbound) || !isOpenAICodexTicketAccount(account, outbound) || !s.openAICodexTicketGatedModel(outbound) {
-		return false
+	return !account.isPrismBrowserUpstreamModelEnabled(outbound) && isOpenAICodexTicketAccount(account, outbound) && s.openAICodexTicketGatedModel(outbound)
+}
+
+type openAICodexTicketFirstTraceKey struct{}
+
+// openAICodexTicketFirstTrace carries one selection's sticky outcome to the
+// point where the chosen account is known. Several sticky checks can run for
+// the same request; the migration is still counted once.
+type openAICodexTicketFirstTrace struct {
+	migrated atomic.Bool
+}
+
+func withOpenAICodexTicketFirstTrace(ctx context.Context) (context.Context, *openAICodexTicketFirstTrace) {
+	trace := &openAICodexTicketFirstTrace{}
+	return context.WithValue(ctx, openAICodexTicketFirstTraceKey{}, trace), trace
+}
+
+func openAICodexTicketFirstTraceFrom(ctx context.Context) *openAICodexTicketFirstTrace {
+	if ctx == nil {
+		return nil
 	}
-	return !s.openAICodexTicketReadyForRequest(account, requestedModel, requireCompact)
+	trace, _ := ctx.Value(openAICodexTicketFirstTraceKey{}).(*openAICodexTicketFirstTrace)
+	return trace
+}
+
+func (s *OpenAIGatewayService) recordOpenAICodexTicketFirstSelection(ctx context.Context, trace *openAICodexTicketFirstTrace, account *Account, requestedModel string, requireCompact bool) {
+	if s == nil || s.codexHarvest == nil || !s.openAICodexTicketNativeGated(account, requestedModel, requireCompact) || !s.openAICodexTicketFirstEnabled(ctx) {
+		return
+	}
+	now := time.Now()
+	if !s.openAICodexTicketReadyForRequest(account, requestedModel, requireCompact) {
+		s.codexHarvest.ticketFirst.add(now, codexTicketFirstTicketless)
+		return
+	}
+	s.codexHarvest.ticketFirst.add(now, codexTicketFirstTicketed)
+	if trace != nil && trace.migrated.Load() {
+		s.codexHarvest.ticketFirst.add(now, codexTicketFirstMigrated)
+	}
 }
 
 // openAICodexTicketDeferredAccounts returns nil when no candidate is deferred,
@@ -1016,7 +1055,7 @@ func (s *OpenAIGatewayService) openAICodexTicketHarvestExcluded(account *Account
 // would never reach a ticket holder; independently, a leftover 292 on a
 // low-priority account (for example a 5x that is no longer harvested) would
 // pin traffic even after a higher-priority 20x harvests.
-func (s *OpenAIGatewayService) openAICodexTicketShouldYieldStickyTo(sticky *Account, candidates []*Account, requestedModel string, requireCompact bool, excludedIDs map[int64]struct{}) bool {
+func (s *OpenAIGatewayService) openAICodexTicketShouldYieldStickyTo(trace *openAICodexTicketFirstTrace, sticky *Account, candidates []*Account, requestedModel string, requireCompact bool, excludedIDs map[int64]struct{}) bool {
 	if s == nil || sticky == nil || !s.openAICodexTicketEnabled() {
 		return false
 	}
@@ -1044,6 +1083,9 @@ func (s *OpenAIGatewayService) openAICodexTicketShouldYieldStickyTo(sticky *Acco
 		if !s.openAICodexTicketReadyForRequest(account, requestedModel, requireCompact) {
 			continue
 		}
+		if stickyDeferred && trace != nil {
+			trace.migrated.Store(true)
+		}
 		return true
 	}
 	return false
@@ -1061,7 +1103,7 @@ func (s *OpenAIGatewayService) openAICodexTicketShouldYieldSticky(ctx context.Co
 	for i := range accounts {
 		candidates = append(candidates, &accounts[i])
 	}
-	return s.openAICodexTicketShouldYieldStickyTo(sticky, candidates, requestedModel, requireCompact, excludedIDs)
+	return s.openAICodexTicketShouldYieldStickyTo(openAICodexTicketFirstTraceFrom(ctx), sticky, candidates, requestedModel, requireCompact, excludedIDs)
 }
 
 func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, account *Account, token, model, proxyURL string, attemptTimeout time.Duration) (state string, status int, err error) {

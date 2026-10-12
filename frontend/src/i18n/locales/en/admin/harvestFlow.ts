@@ -191,6 +191,13 @@ export default {
       enabledHint: 'Switch nodes within a bounded round. Disabling restores rotation without deleting history.',
       ticketFirst: 'Schedule ticket holders first',
       ticketFirstHint: 'Affects live traffic: ticket-gated models go to accounts holding a valid ticket first, and priority only orders accounts within the ticketed and ticketless groups. Sessions on ticketless accounts move to ticket holders and lose their prompt cache. When off, accounts are scheduled by priority as before.',
+      ticketFirstStats: {
+        title: 'Ticket-first scheduling · last {minutes} minutes',
+        ticketed: 'Served by ticket holders',
+        migrated: 'Sessions moved in',
+        ticketless: 'Served without a ticket',
+        hint: 'Counts ticket-gated requests on the native Codex route while the switch is on, for this instance only. Resets on restart.'
+      },
       unavailable: 'Directed exit unavailable:',
       unsaved: 'Unsaved changes',
       loading: 'Loading harvest settings…',

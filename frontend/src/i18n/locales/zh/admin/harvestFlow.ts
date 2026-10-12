@@ -191,6 +191,13 @@ export default {
       enabledHint: '同轮失败后换节点；关闭回到原轮询，保留历史记录。',
       ticketFirst: '有票账号优先调度',
       ticketFirstHint: '影响线上请求：需要票的模型先发给持有有效票的账号，账号优先级只在有票、无票两组内排序；绑定在无票账号上的会话会迁到有票账号，丢失提示词缓存。关闭后按原优先级调度。',
+      ticketFirstStats: {
+        title: '有票优先调度 · 最近 {minutes} 分钟',
+        ticketed: '有票账号接单',
+        migrated: '其中会话迁入',
+        ticketless: '无票账号接单',
+        hint: '只统计开关开启时、需要票的模型发往原生 Codex 线路的请求；按本实例统计，重启后清零。'
+      },
       unavailable: '定向出口暂不可用：',
       unsaved: '有未保存修改',
       loading: '正在读取采集设置…',

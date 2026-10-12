@@ -108,6 +108,26 @@ describe('Harvest controls draft and request ordering', () => {
     expect(input(wrapper, 'ticket-first-toggle').checked).toBe(true)
   })
 
+  it('shows ticket-first stats only once the switch is saved on or traffic was counted', async () => {
+    const data = snapshot()
+    data.runtime.ticket_first = { window_minutes: 60, ticketed: 0, ticketless: 0, migrated: 0 }
+    api.getControls.mockResolvedValue(data)
+    wrapper = mount(HarvestControlsPanel)
+    await flushPromises()
+    expect(wrapper.find(selector('ticket-first-stats')).exists()).toBe(false)
+
+    const enabled = snapshot()
+    enabled.settings.ticket_first_scheduling = true
+    enabled.runtime.ticket_first = { window_minutes: 60, ticketed: 12, ticketless: 3, migrated: 4 }
+    api.getControls.mockResolvedValue(enabled)
+    await wrapper.setProps({ refreshKey: 'enabled' })
+    await flushPromises()
+    const stats = wrapper.get(selector('ticket-first-stats')).text()
+    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.ticketed 12')
+    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.migrated 4')
+    expect(stats).toContain('admin.harvestFlow.controls.ticketFirstStats.ticketless 3')
+  })
+
   it('keeps an edited draft across automatic refreshes', async () => {
     wrapper = mount(HarvestControlsPanel)
     await flushPromises()

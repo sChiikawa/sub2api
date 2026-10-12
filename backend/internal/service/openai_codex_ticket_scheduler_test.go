@@ -341,32 +341,44 @@ func ticketFirstFixture(t *testing.T, advanced, loadBatch bool) (*OpenAIGatewayS
 
 func TestCodexTicketSchedulerPrefersTicketHolders(t *testing.T) {
 	for _, path := range []struct {
-		name                string
-		advanced, loadBatch bool
+		name                          string
+		advanced, loadBatch, weighted bool
 	}{
-		{"advanced", true, true},
-		{"legacy_batch", false, true},
-		{"legacy_nonbatch", false, false},
+		{"advanced", true, true, false},
+		{"advanced_weighted", true, true, true},
+		{"legacy_batch", false, true, false},
+		{"legacy_nonbatch", false, false, false},
 	} {
 		for _, scenario := range []string{"ticket_first", "fallback_when_excluded", "ungated_keeps_priority", "sticky_migrates", "switch_off", "switch_off_sticky_stays"} {
 			t.Run(path.name+"/"+scenario, func(t *testing.T) {
 				svc, ticketed, ticketless, groupID := ticketFirstFixture(t, path.advanced, path.loadBatch)
+				if path.weighted {
+					svc.rateLimitService = newOpenAIAdvancedSchedulerRateLimitService("true", "true")
+				}
 				model, session, want := "gpt-6-astra", "", ticketed.ID
+				wantStats := [3]int64{1, 0, 0}
 				var excluded map[int64]struct{}
 				var cache *schedulerTestGatewayCache
 				switch scenario {
 				case "fallback_when_excluded":
 					excluded, want = map[int64]struct{}{ticketed.ID: {}}, ticketless.ID
+					wantStats = [3]int64{0, 1, 0}
 				case "ungated_keeps_priority":
 					model, want = "gpt-5.5", ticketless.ID
+					wantStats = [3]int64{}
 				case "switch_off":
 					svc.codexHarvest.current.TicketFirstScheduling = false
 					want = ticketless.ID
+					wantStats = [3]int64{}
 				case "switch_off_sticky_stays":
 					svc.codexHarvest.current.TicketFirstScheduling = false
 					want = ticketless.ID
-					fallthrough
+					wantStats = [3]int64{}
+					session = "synthetic-session"
+					cache = &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:" + session: ticketless.ID}}
+					svc.cache = cache
 				case "sticky_migrates":
+					wantStats = [3]int64{1, 0, 1}
 					session = "synthetic-session"
 					cache = &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:" + session: ticketless.ID}}
 					svc.cache = cache
@@ -379,12 +391,27 @@ func TestCodexTicketSchedulerPrefersTicketHolders(t *testing.T) {
 				if cache != nil {
 					require.Equal(t, want, cache.sessionBindings["openai:"+session])
 				}
+				stats := svc.codexHarvest.Runtime().TicketFirst
+				require.Equal(t, wantStats, [3]int64{stats.Ticketed, stats.Ticketless, stats.Migrated})
 				if result.ReleaseFunc != nil {
 					result.ReleaseFunc()
 				}
 			})
 		}
 	}
+}
+
+func TestCodexTicketFirstCounterWindow(t *testing.T) {
+	var counter codexTicketFirstCounter
+	start := time.Unix(1_800_000_000, 0)
+	counter.add(start, codexTicketFirstTicketed)
+	counter.add(start, codexTicketFirstMigrated)
+	counter.add(start.Add(30*time.Minute), codexTicketFirstTicketless)
+	require.Equal(t, CodexTicketFirstStats{WindowMinutes: 60, Ticketed: 1, Ticketless: 1, Migrated: 1}, counter.snapshot(start.Add(59*time.Minute)))
+	require.Equal(t, CodexTicketFirstStats{WindowMinutes: 60, Ticketless: 1}, counter.snapshot(start.Add(60*time.Minute)))
+
+	counter.add(start.Add(60*time.Minute), codexTicketFirstTicketed)
+	require.Equal(t, CodexTicketFirstStats{WindowMinutes: 60, Ticketed: 1, Ticketless: 1}, counter.snapshot(start.Add(60*time.Minute)), "a reused slot drops the expired minute")
 }
 
 func TestCodexTicketSchedulerAffinityCannotBypassFinalState(t *testing.T) {

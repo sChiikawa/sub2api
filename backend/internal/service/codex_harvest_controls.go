@@ -41,13 +41,66 @@ type CodexHarvestControls struct {
 }
 
 type CodexHarvestRuntime struct {
-	Running         bool       `json:"running"`
-	NextRoundAt     *time.Time `json:"next_round_at"`
-	RequestsUsed    int        `json:"requests_used"`
-	RequestBudget   int        `json:"request_budget"`
-	CurrentNode     string     `json:"current_node"`
-	SelectionReason string     `json:"selection_reason"`
-	DegradedReason  string     `json:"degraded_reason"`
+	Running         bool                  `json:"running"`
+	NextRoundAt     *time.Time            `json:"next_round_at"`
+	RequestsUsed    int                   `json:"requests_used"`
+	RequestBudget   int                   `json:"request_budget"`
+	CurrentNode     string                `json:"current_node"`
+	SelectionReason string                `json:"selection_reason"`
+	DegradedReason  string                `json:"degraded_reason"`
+	TicketFirst     CodexTicketFirstStats `json:"ticket_first"`
+}
+
+// CodexTicketFirstStats counts selections for ticket-gated models on the
+// native Codex route while ticket-first scheduling is on. Migrated is a subset
+// of Ticketed. Counts are per process and reset on restart.
+type CodexTicketFirstStats struct {
+	WindowMinutes int   `json:"window_minutes"`
+	Ticketed      int64 `json:"ticketed"`
+	Ticketless    int64 `json:"ticketless"`
+	Migrated      int64 `json:"migrated"`
+}
+
+const codexTicketFirstWindowMinutes = 60
+
+const (
+	codexTicketFirstTicketed = iota
+	codexTicketFirstTicketless
+	codexTicketFirstMigrated
+)
+
+type codexTicketFirstCounter struct {
+	mu      sync.Mutex
+	minutes [codexTicketFirstWindowMinutes]int64
+	counts  [codexTicketFirstWindowMinutes][3]int64
+}
+
+func (c *codexTicketFirstCounter) add(now time.Time, kind int) {
+	minute := now.Unix() / 60
+	slot := minute % codexTicketFirstWindowMinutes
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.minutes[slot] != minute {
+		c.minutes[slot] = minute
+		c.counts[slot] = [3]int64{}
+	}
+	c.counts[slot][kind]++
+}
+
+func (c *codexTicketFirstCounter) snapshot(now time.Time) CodexTicketFirstStats {
+	minute := now.Unix() / 60
+	out := CodexTicketFirstStats{WindowMinutes: codexTicketFirstWindowMinutes}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for slot, at := range c.minutes {
+		if at > minute || minute-at >= codexTicketFirstWindowMinutes {
+			continue
+		}
+		out.Ticketed += c.counts[slot][codexTicketFirstTicketed]
+		out.Ticketless += c.counts[slot][codexTicketFirstTicketless]
+		out.Migrated += c.counts[slot][codexTicketFirstMigrated]
+	}
+	return out
 }
 
 type CodexHarvestControlSnapshot struct {
@@ -76,6 +129,7 @@ type CodexHarvestService struct {
 	runtime     CodexHarvestRuntime
 	lastRequest time.Time
 	explore     atomic.Uint64
+	ticketFirst codexTicketFirstCounter
 }
 
 func CodexHarvestSpeedPresets() map[string]CodexHarvestSpeed {
@@ -298,8 +352,10 @@ func (s *CodexHarvestService) setRuntime(update func(*CodexHarvestRuntime)) {
 
 func (s *CodexHarvestService) Runtime() CodexHarvestRuntime {
 	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
-	return s.runtime
+	out := s.runtime
+	s.runtimeMu.Unlock()
+	out.TicketFirst = s.ticketFirst.snapshot(time.Now())
+	return out
 }
 
 func (s *CodexHarvestService) degrade(reason string) {
