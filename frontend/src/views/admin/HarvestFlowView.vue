@@ -150,7 +150,7 @@
                       :disabled="saving"
                       @click="toggleSkipHarvest(account)"
                     >
-                      {{ account.skip_harvest ? t('admin.harvestFlow.enableHarvest') : t('admin.harvestFlow.skipHarvest') }}
+                      {{ isHarvestSelected(account) ? t('admin.harvestFlow.skipHarvest') : t('admin.harvestFlow.enableHarvest') }}
                     </button>
                     <span class="w-8 text-right text-xs text-gray-400">{{ account.ready_count }}/{{ account.tickets?.length ?? 0 }}</span>
                   </div>
@@ -330,7 +330,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'probe_hit' || kind === 'accept' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -387,6 +387,7 @@ function eventDetail(event: CodexHarvestFlowEvent) {
 
 function scopeLabel(mode?: string, policy?: string, groupIds?: number[]) {
   if (snapshot.value?.harvest.scope_error) return t('admin.harvestFlow.scopeUnavailable')
+  if (mode === 'selected_accounts') return t('admin.harvestFlow.scopeSelectedAccounts')
   const scope = mode === 'selected'
     ? t('admin.harvestFlow.scopeSelected', { n: groupIds?.length || 0 })
     : t('admin.harvestFlow.scopeAll')
@@ -529,6 +530,10 @@ async function fetchFlow() {
   }
 }
 
+function isHarvestSelected(account: CodexHarvestFlowAccount) {
+  return account.harvest_selected ?? !account.skip_harvest
+}
+
 async function toggleSkipHarvest(account: CodexHarvestFlowAccount) {
   if (disposed || saving.value) return
   saving.value = true
@@ -539,10 +544,13 @@ async function toggleSkipHarvest(account: CodexHarvestFlowAccount) {
   errorMessage.value = ''
   let saved = false
   try {
-    const result = await updateCodexSkipHarvest(account.id, !account.skip_harvest)
+    const result = await updateCodexSkipHarvest(account.id, isHarvestSelected(account))
     if (disposed) return
     const current = snapshot.value?.accounts?.find(item => item.id === account.id)
-    if (current) current.skip_harvest = result.skip_harvest
+    if (current) {
+      current.skip_harvest = result.skip_harvest
+      current.harvest_selected = !result.skip_harvest
+    }
     saved = true
   } catch (error) {
     if (disposed) return
