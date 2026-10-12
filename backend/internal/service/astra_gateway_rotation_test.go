@@ -113,6 +113,34 @@ func TestGatewayCookieIsSavedForOneHour(t *testing.T) {
 	require.Empty(t, s.collectedAstraGatewaysAt(start.Add(2*time.Hour)))
 }
 
+func TestSameAccountKeepsOnlyTwoLatestGatewayCookies(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	start := time.Date(2026, 10, 12, 13, 0, 0, 0, time.UTC)
+	host := "chat.gateway.unified-125.api.openai.com"
+	first := mint780Pair(start.Add(time.Hour), "unified-125")
+	second := mint780Pair(start.Add(2*time.Hour), "unified-125")
+	third := mint780Pair(start.Add(3*time.Hour), "unified-125")
+	other := mint780Pair(start.Add(2*time.Hour), "unified-125")
+	s.rememberGatewayCookieFrom(7, "rotating", first, start)
+	s.rememberGatewayCookieFrom(7, "rotating", second, start.Add(time.Minute))
+	s.rememberGatewayCookieFrom(8, "other", other, start)
+	s.rememberGatewayCookieFrom(7, "rotating", second, start.Add(90*time.Second))
+	s.rememberGatewayCookieFrom(7, "rotating", third, start.Add(2*time.Minute))
+	list := s.collectedAstraGatewaysAt(start.Add(2 * time.Minute))
+	require.Len(t, list, 3)
+	var own []AstraGatewayPoolEntry
+	for _, item := range list {
+		require.Equal(t, host, item.Host)
+		if item.AccountID == 7 {
+			own = append(own, item)
+		} else {
+			require.Equal(t, int64(8), item.AccountID)
+		}
+	}
+	require.Len(t, own, 2)
+	require.ElementsMatch(t, []time.Time{start.Add(time.Minute), start.Add(2 * time.Minute)}, []time.Time{own[0].SavedAt, own[1].SavedAt})
+}
+
 func TestSameGatewayKeepsEachAccountCookieAsBackup(t *testing.T) {
 	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
 	account := ticketTestAccount(9)

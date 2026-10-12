@@ -20,8 +20,9 @@ import (
 // higher number was already used. A used gateway is repeated only after every
 // gateway saved at that moment has had a turn.
 const (
-	astraGatewayTurnDuration = 240 * time.Second
-	astraGatewayCookieTTL    = time.Hour
+	astraGatewayTurnDuration          = 240 * time.Second
+	astraGatewayCookieTTL             = time.Hour
+	astraGatewayCookiesPerAccountHost = 2
 )
 
 type astraGatewaySlot struct {
@@ -162,7 +163,39 @@ func (s *OpenAIGatewayService) rememberGatewayCookieFrom(accountID int64, accoun
 		ExpiresAt:           now.Add(astraGatewayCookieTTL),
 		CredentialExpiresAt: credentialExpires,
 	}
+	s.trimAccountGatewayCookiesLocked(host, accountID, key)
 	return true
+}
+
+func (s *OpenAIGatewayService) trimAccountGatewayCookiesLocked(host string, accountID int64, keepKey string) {
+	type savedCookie struct {
+		key   string
+		saved time.Time
+	}
+	mine := make([]savedCookie, 0, 4)
+	for key, slot := range s.astraGatewaySlots {
+		if slot.Host == host && slot.AccountID == accountID {
+			mine = append(mine, savedCookie{key: key, saved: slot.SavedAt})
+		}
+	}
+	if len(mine) <= astraGatewayCookiesPerAccountHost {
+		return
+	}
+	slices.SortFunc(mine, func(a, b savedCookie) int {
+		if compared := a.saved.Compare(b.saved); compared != 0 {
+			return compared
+		}
+		if a.key == keepKey {
+			return 1
+		}
+		if b.key == keepKey {
+			return -1
+		}
+		return strings.Compare(a.key, b.key)
+	})
+	for _, old := range mine[:len(mine)-astraGatewayCookiesPerAccountHost] {
+		delete(s.astraGatewaySlots, old.key)
+	}
 }
 
 func (s *OpenAIGatewayService) seedGatewayCookiesFromTickets() {

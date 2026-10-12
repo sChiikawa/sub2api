@@ -67,7 +67,7 @@ export default {
     events: 'Flow events',
     accounts: 'Ticket accounts',
     gatewayPool: 'Collected gateway pool',
-    gatewayPoolHint: 'A gateway and its route cookie are kept for 1 hour. Each account’s result for the same gateway is kept, and another account’s cookie is the backup when the current one expires. Each account keeps one usable gateway for 240 seconds, then moves to the next unused one and starts over after the last.',
+    gatewayPoolHint: 'A gateway and its route cookie are kept for 1 hour. Each account keeps only its two newest cookies for the same gateway, and the other one is the backup when the current cookie expires. Each account keeps one usable gateway for 240 seconds, then moves to the next unused one and starts over after the last.',
     gatewayPoolEmpty: 'No gateways collected yet. An OpenAI gateway found in a harvest response cookie will appear here.',
     gatewayPoolCount: 'Unique {unique} · All {total}',
     gatewayCookieSaved: 'Route cookie saved',
