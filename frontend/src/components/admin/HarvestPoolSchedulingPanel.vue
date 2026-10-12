@@ -2,7 +2,7 @@
   <div>
     <p v-if="error" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p>
     <button v-if="!draft && !loading" type="button" class="btn btn-secondary" @click="load">{{ t("common.refresh") }}</button>
-    <fieldset v-if="draft" :disabled="saving || loading" class="mt-5 space-y-3 border-t border-gray-200 pt-5 dark:border-dark-600" data-testid="pool-scheduling-panel">
+    <fieldset v-if="draft" :disabled="saving || loading" class="mt-5 min-w-0 space-y-3 border-t border-gray-200 pt-5 dark:border-dark-600" data-testid="pool-scheduling-panel">
       <div class="flex items-start justify-between gap-4">
         <div>
           <h2 class="font-semibold">{{ t(`${p}.accountScheduling`) }}</h2>
@@ -21,9 +21,12 @@
         <div v-if="draft.scheduling_mode === 'groups'" data-testid="scheduling-groups">
           <p class="text-sm">{{ t(`${p}.schedulingGroups`) }}</p>
           <p v-if="groupsError" class="text-sm text-red-600">{{ groupsError }}</p>
-          <label v-for="group in groups" :key="group.id" class="flex items-center gap-2 py-1 text-sm">
-            <input v-model="draft.scheduling_group_ids" type="checkbox" :value="group.id" />{{ group.name }} (#{{ group.id }})
-          </label>
+          <div class="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+            <label v-for="group in groups" :key="group.id" class="flex max-w-full cursor-pointer items-start gap-2 py-1 text-sm">
+              <input v-model="draft.scheduling_group_ids" class="mt-0.5 shrink-0" type="checkbox" :value="group.id" />
+              <span class="min-w-0 break-words">{{ group.name }} (#{{ group.id }})</span>
+            </label>
+          </div>
         </div>
       </div>
       <p v-if="validation" role="alert" class="mt-3 text-sm text-amber-700">{{ validation }}</p>
