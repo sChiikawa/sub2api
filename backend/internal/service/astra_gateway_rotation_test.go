@@ -442,6 +442,70 @@ func TestCandyPassedAccountIsPreferredUntilTheGatewayExpires(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestCandyPassWritesAccountConcurrencyAndRestoresItWhenTheGatewayExpires(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	now := time.Now()
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-4"))
+	account := ticketTestAccount(7)
+	account.Concurrency = 1
+	account.Priority = 20
+	account.Extra = map[string]any{}
+	repo := &candyScheduleRepo{account: account}
+	s.accountRepo = repo
+	s.noteGatewayCandyTested(account.ID, "chat.gateway.unified-4.api.openai.com", now.Add(30*time.Minute), true)
+	require.Equal(t, 3, account.Concurrency)
+	require.Equal(t, 1, account.Priority)
+	require.Equal(t, 1, account.Extra[gatewayCandySavedConcurrencyKey])
+	require.Equal(t, 20, account.Extra[gatewayCandySavedPriorityKey])
+	s.syncCandyAccountSchedules()
+	require.Equal(t, 3, account.Concurrency)
+	require.Equal(t, 1, account.Extra[gatewayCandySavedConcurrencyKey])
+	s.astraGatewayMu.Lock()
+	s.astraGatewayCandyPass[account.ID]["chat.gateway.unified-4.api.openai.com"] = astraGatewayCandyAccountPass{
+		Host: "chat.gateway.unified-4.api.openai.com", Expires: now.Add(-time.Minute), Passed: true,
+	}
+	s.astraGatewayMu.Unlock()
+	s.restoreExpiredCandyAccountSchedules()
+	require.Equal(t, 1, account.Concurrency)
+	require.Equal(t, 20, account.Priority)
+}
+
+type candyScheduleRepo struct {
+	AccountRepository
+	account *Account
+}
+
+func (r *candyScheduleRepo) GetByID(context.Context, int64) (*Account, error) {
+	copy := *r.account
+	if r.account.Extra != nil {
+		copy.Extra = map[string]any{}
+		for key, value := range r.account.Extra {
+			copy.Extra[key] = value
+		}
+	}
+	return &copy, nil
+}
+
+func (r *candyScheduleRepo) BulkUpdate(_ context.Context, _ []int64, updates AccountBulkUpdate) (int64, error) {
+	if updates.Concurrency != nil {
+		r.account.Concurrency = *updates.Concurrency
+	}
+	if updates.Priority != nil {
+		r.account.Priority = *updates.Priority
+	}
+	if r.account.Extra == nil {
+		r.account.Extra = map[string]any{}
+	}
+	for key, value := range updates.Extra {
+		if value == nil {
+			delete(r.account.Extra, key)
+			continue
+		}
+		r.account.Extra[key] = value
+	}
+	return 1, nil
+}
+
 func TestGatewayCandyFailureSkipsOnlyTheCurrentAccount(t *testing.T) {
 	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
 	account := ticketTestAccount(7)

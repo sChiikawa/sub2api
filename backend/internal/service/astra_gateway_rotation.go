@@ -215,19 +215,23 @@ func (s *OpenAIGatewayService) archiveExpiredAstraGatewaysAt(now time.Time) int 
 		return 0
 	}
 	s.ensureAstraGatewayStore()
-	var removed []astraGatewaySlot
-	defer func() { deleteAstraGatewaySlots(removed) }()
-	s.astraGatewayMu.Lock()
-	defer s.astraGatewayMu.Unlock()
-	for key, slot := range s.astraGatewaySlots {
-		if !gatewaySlotActive(slot, now) {
-			removed = append(removed, slot)
-			delete(s.astraGatewaySlots, key)
+	removed := func() []astraGatewaySlot {
+		s.astraGatewayMu.Lock()
+		defer s.astraGatewayMu.Unlock()
+		var removed []astraGatewaySlot
+		for key, slot := range s.astraGatewaySlots {
+			if !gatewaySlotActive(slot, now) {
+				removed = append(removed, slot)
+				delete(s.astraGatewaySlots, key)
+			}
 		}
-	}
+		return removed
+	}()
+	deleteAstraGatewaySlots(removed)
 	if len(removed) > 0 {
 		logger.L().Info("astra gateway pool archived expired entries", zap.Int("count", len(removed)))
 	}
+	s.syncCandyAccountSchedules()
 	return len(removed)
 }
 
@@ -538,6 +542,137 @@ func (s *OpenAIGatewayService) noteGatewayCandyTested(accountID int64, host stri
 	s.astraGatewayCandyPass[accountID][host] = astraGatewayCandyAccountPass{Host: host, Expires: expires, Passed: passed}
 	s.astraGatewayMu.Unlock()
 	saveAstraGatewayCandyPass(accountID, host, expires, passed)
+	if passed {
+		s.applyCandyAccountSchedule(accountID)
+		return
+	}
+	if _, still := s.candyPassedAccountSchedule(accountID, time.Now()); !still {
+		s.restoreCandyAccountSchedule(accountID)
+	}
+}
+
+const (
+	gatewayCandySavedConcurrencyKey = "openai_gateway_candy_saved_concurrency"
+	gatewayCandySavedPriorityKey    = "openai_gateway_candy_saved_priority"
+	gatewayCandySchedulePriority    = 1
+)
+
+func (s *OpenAIGatewayService) applyCandyAccountSchedule(accountID int64) {
+	if s == nil || s.accountRepo == nil || accountID <= 0 {
+		return
+	}
+	concurrency, active := s.candyPassedAccountSchedule(accountID, time.Now())
+	if !active {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil {
+		return
+	}
+	priority := gatewayCandySchedulePriority
+	_, savedConcurrency := extraInt(account.Extra, gatewayCandySavedConcurrencyKey)
+	_, savedPriority := extraInt(account.Extra, gatewayCandySavedPriorityKey)
+	if savedConcurrency && savedPriority && account.Concurrency == concurrency && account.Priority == priority {
+		return
+	}
+	extra := map[string]any{}
+	if _, saved := extraInt(account.Extra, gatewayCandySavedConcurrencyKey); !saved {
+		extra[gatewayCandySavedConcurrencyKey] = account.Concurrency
+		extra[gatewayCandySavedPriorityKey] = account.Priority
+	}
+	update := AccountBulkUpdate{Concurrency: &concurrency, Priority: &priority}
+	if len(extra) > 0 {
+		update.Extra = extra
+	}
+	_, _ = s.accountRepo.BulkUpdate(ctx, []int64{accountID}, update)
+}
+
+func (s *OpenAIGatewayService) syncCandyAccountSchedules() {
+	if s == nil {
+		return
+	}
+	s.ensureAstraGatewayStore()
+	now := time.Now()
+	s.astraGatewayMu.Lock()
+	var active []int64
+	for accountID := range s.astraGatewayCandyPass {
+		if s.candyPassActiveLocked(accountID, now) {
+			active = append(active, accountID)
+		}
+	}
+	s.astraGatewayMu.Unlock()
+	for _, accountID := range active {
+		s.applyCandyAccountSchedule(accountID)
+	}
+	s.restoreExpiredCandyAccountSchedules()
+}
+
+func (s *OpenAIGatewayService) restoreExpiredCandyAccountSchedules() {
+	if s == nil {
+		return
+	}
+	s.ensureAstraGatewayStore()
+	now := time.Now()
+	s.astraGatewayMu.Lock()
+	var expired []int64
+	for accountID := range s.astraGatewayCandyPass {
+		if !s.candyPassActiveLocked(accountID, now) {
+			expired = append(expired, accountID)
+		}
+	}
+	s.astraGatewayMu.Unlock()
+	for _, accountID := range expired {
+		s.restoreCandyAccountSchedule(accountID)
+	}
+}
+
+func (s *OpenAIGatewayService) restoreCandyAccountSchedule(accountID int64) {
+	if s == nil || s.accountRepo == nil || accountID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil {
+		return
+	}
+	concurrency, hasConcurrency := extraInt(account.Extra, gatewayCandySavedConcurrencyKey)
+	priority, hasPriority := extraInt(account.Extra, gatewayCandySavedPriorityKey)
+	if !hasConcurrency && !hasPriority {
+		return
+	}
+	update := AccountBulkUpdate{Extra: map[string]any{
+		gatewayCandySavedConcurrencyKey: nil,
+		gatewayCandySavedPriorityKey:    nil,
+	}}
+	if hasConcurrency {
+		update.Concurrency = &concurrency
+	}
+	if hasPriority {
+		update.Priority = &priority
+	}
+	_, _ = s.accountRepo.BulkUpdate(ctx, []int64{accountID}, update)
+}
+
+func extraInt(extra map[string]any, key string) (int, bool) {
+	if extra == nil {
+		return 0, false
+	}
+	switch value := extra[key].(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		return int(parsed), err == nil
+	default:
+		return 0, false
+	}
 }
 
 func resetGatewayRoundLocked(turn *astraGatewayTurn) {
@@ -580,6 +715,15 @@ func (s *OpenAIGatewayService) gatewayCandyAlreadyTested(accountID int64, host s
 	return tested
 }
 
+func (s *OpenAIGatewayService) candyPassActiveLocked(accountID int64, now time.Time) bool {
+	for host, pass := range s.astraGatewayCandyPass[accountID] {
+		if pass.Passed && !pass.Expires.IsZero() && now.Before(pass.Expires) && s.gatewayHostActiveLocked(host, now) {
+			return true
+		}
+	}
+	return false
+}
+
 // candyPassedAccountSchedule reports that this account passed Beta candy on a
 // gateway that is still active. Scheduling picks it first and uses the
 // configured concurrency only until that gateway expires.
@@ -589,13 +733,7 @@ func (s *OpenAIGatewayService) candyPassedAccountSchedule(accountID int64, now t
 	}
 	s.ensureAstraGatewayStore()
 	s.astraGatewayMu.Lock()
-	active := false
-	for host, pass := range s.astraGatewayCandyPass[accountID] {
-		if pass.Passed && !pass.Expires.IsZero() && now.Before(pass.Expires) && s.gatewayHostActiveLocked(host, now) {
-			active = true
-			break
-		}
-	}
+	active := s.candyPassActiveLocked(accountID, now)
 	s.astraGatewayMu.Unlock()
 	if !active {
 		return 0, false
