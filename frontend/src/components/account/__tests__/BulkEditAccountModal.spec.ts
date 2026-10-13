@@ -37,7 +37,8 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       getManagementCapabilities: vi.fn().mockResolvedValue({ web_search_enabled: false, account_quota_notify_enabled: false }),
       bulkUpdate: vi.fn(),
-      checkMixedChannelRisk: vi.fn()
+      checkMixedChannelRisk: vi.fn(),
+      getOpenAIRequestTimezones: vi.fn().mockResolvedValue({ default: 'Asia/Singapore', timezones: ['Asia/Singapore', 'Asia/Tokyo'] })
     }
   }
 }))
@@ -95,6 +96,18 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
 }
 
 describe('BulkEditAccountModal', () => {
+  it('bulk-sets the request timezone for OpenAI accounts and hides it for other platforms', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth', 'apikey'] })
+    await wrapper.get('[data-testid="bulk-edit-request-timezone-enabled"]').setValue(true)
+    await flushPromises()
+    await wrapper.get('[aria-label="admin.accounts.openai.requestTimezone"]').setValue('Asia/Tokyo')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: { openai_request_timezone: 'Asia/Tokyo' } })
+    wrapper.unmount()
+    expect(mountModal().find('[data-testid="bulk-edit-request-timezone-enabled"]').exists()).toBe(false)
+  })
+
   it('repairs OAuth alias scope without replacing mappings or enabling BPS', async () => {
     const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
     await wrapper.get('[data-testid="enable-model-aliases"]').setValue(true)

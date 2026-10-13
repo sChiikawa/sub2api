@@ -32,6 +32,17 @@
       </div>
 
       <!-- Excel / BPS protocol (ChatGPT OAuth only) -->
+      <div v-if="allOpenAIAccounts" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label class="input-label mb-0" for="bulk-edit-request-timezone-enabled">{{ t('admin.accounts.openai.requestTimezone') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.requestTimezoneDesc') }}</p>
+          </div>
+          <input id="bulk-edit-request-timezone-enabled" v-model="enableRequestTimezone" type="checkbox" data-testid="bulk-edit-request-timezone-enabled" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+        </div>
+        <OpenAIRequestTimezoneField v-if="enableRequestTimezone" v-model="openAIRequestTimezone" />
+      </div>
+
       <div v-if="allOpenAIOAuthOnly && globalBpsEnabled" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
@@ -1567,6 +1578,7 @@ import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
+import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
 import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
 import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
@@ -1655,6 +1667,9 @@ const allTargetsGrok = computed(
 )
 const isMixedPlatform = computed(() => targetSelectedPlatforms.value.length > 1)
 
+const allOpenAIAccounts = computed(() => targetSelectedPlatforms.value.length > 0 && targetSelectedPlatforms.value.every(platform => platform === 'openai'))
+const enableRequestTimezone = ref(false)
+const openAIRequestTimezone = ref('Asia/Singapore')
 const allOpenAIPassthroughCapable = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
@@ -2129,6 +2144,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
+  if (enableRequestTimezone.value && allOpenAIAccounts.value) {
+    ensureExtra().openai_request_timezone = openAIRequestTimezone.value
+  }
+
   if (enableExcelBPS.value && allOpenAIOAuthOnly.value) {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
@@ -2379,6 +2398,7 @@ const handleSubmit = async () => {
 
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
+    (enableRequestTimezone.value && allOpenAIAccounts.value) ||
     (enableExcelBPS.value && allOpenAIOAuthOnly.value) ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
@@ -2568,6 +2588,8 @@ watch(
       enableStatus.value = false
       enableGroups.value = false
       enableExcelBPS.value = false
+      enableRequestTimezone.value = false
+      openAIRequestTimezone.value = 'Asia/Singapore'
       enableOpenAIPassthrough.value = false
       enableOpenAIFlattenNamespaces.value = false
       enableOpenAILongContextBilling.value = false
