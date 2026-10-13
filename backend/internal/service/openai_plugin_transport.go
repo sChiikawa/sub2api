@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 )
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
@@ -19,6 +20,13 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	}
 	request = s.stickBoundCodexTicketRequest(request, account)
 	s.overlayAccountGatewayCookie(request, account)
+	gatewayModel := openAIRequestModel(request)
+	gatewayCookie := request.Header.Get("Cookie")
+	gatewayHost := ""
+	if s.shouldRotateCodexOAuthGateway(request.Context(), account, gatewayModel) {
+		gatewayHost = codex780CookieGatewayHost(strings.Split(gatewayCookie, "; "))
+	}
+	candyHeaders := request.Header.Clone()
 	boundTicket := s.codexTicketRequestBound(request, account)
 	observationTicket := s.boundCodexTicket(request, account)
 	observationHeaders := request.Header.Clone()
@@ -38,6 +46,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			releaseChat()
 			if observe {
 				s.observeScheduledAstraCandy(request.Context(), observationHeaders, account, observationTicket)
+				s.observeGatewayRotationCandy(request.Context(), candyHeaders, account, gatewayModel, gatewayHost, gatewayCookie)
 			}
 		})
 	}()

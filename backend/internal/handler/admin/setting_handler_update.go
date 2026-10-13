@@ -28,6 +28,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexTicketHarvestScope     *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
 	OpenAICodexTicketStrictResponse   *bool                            `json:"openai_codex_ticket_strict_response"`
 	OpenAICodexTicketCandyObservation *bool                            `json:"openai_codex_ticket_candy_observation"`
+	OpenAICodexGatewayCandyCheck      *bool                            `json:"openai_codex_gateway_candy_check"`
 	OpenAICodexTicketFailClosed       *bool                            `json:"openai_codex_ticket_fail_closed"`
 	OpenAICodexTicketStrategy         *string                          `json:"openai_codex_ticket_strategy"`
 	PrismBrowserEnabled               bool                             `json:"prism_browser_enabled"`
@@ -2064,6 +2065,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexTicketCandyObservation
 		}(),
+		OpenAICodexGatewayCandyCheck: func() bool {
+			if req.OpenAICodexGatewayCandyCheck != nil {
+				return *req.OpenAICodexGatewayCandyCheck
+			}
+			return previousSettings.OpenAICodexGatewayCandyCheck
+		}(),
 		OpenAICodexTicketFailClosed: func() bool {
 			if req.OpenAICodexTicketFailClosed != nil {
 				return *req.OpenAICodexTicketFailClosed
@@ -2707,6 +2714,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexTicketStrategy:                              updatedSettings.OpenAICodexTicketStrategy,
 		OpenAICodexTicketStrictResponse:                        updatedSettings.OpenAICodexTicketStrictResponse,
 		OpenAICodexTicketCandyObservation:                      updatedSettings.OpenAICodexTicketCandyObservation,
+		OpenAICodexGatewayCandyCheck:                           updatedSettings.OpenAICodexGatewayCandyCheck,
 		OpenAICodexTicketFailClosed:                            updatedSettings.OpenAICodexTicketFailClosed,
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		OpenAICodexTicketModels:                                updatedSettings.OpenAICodexTicketModels,

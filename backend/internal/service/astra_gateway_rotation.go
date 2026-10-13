@@ -473,16 +473,58 @@ func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, m
 	if turn.OverloadStreak < astraGatewayOverloadStreak {
 		return
 	}
-	removed = s.pruneGatewaySlotsLocked(now)
+	removed, turnSave = s.rotateAccountGatewayLocked(account, turn, model, "overload", now)
+}
+
+func gatewayCandySkipsRotation(reason string) bool {
+	switch reason {
+	case "candy_passed", "candy_disabled", "candy_unavailable", "candy_stale", "candy_busy":
+		return false
+	default:
+		return reason != ""
+	}
+}
+
+// skipAccountGateway ends this account's current gateway turn. The request
+// that already finished is not replayed.
+func (s *OpenAIGatewayService) skipAccountGateway(account *Account, model, reason string) {
+	if s == nil || account == nil || account.ID <= 0 || !gatewayCandySkipsRotation(reason) {
+		return
+	}
+	s.ensureAstraGatewayStore()
+	var removed []astraGatewaySlot
+	var turnSave *AstraGatewayPoolTurn
+	defer func() {
+		deleteAstraGatewaySlots(removed)
+		if turnSave != nil {
+			saveAstraGatewayTurn(*turnSave)
+		}
+	}()
+	s.astraGatewayMu.Lock()
+	defer s.astraGatewayMu.Unlock()
+	turn := s.astraGatewayTurns[account.ID]
+	if turn == nil || turn.Host == "" {
+		return
+	}
+	removed, turnSave = s.rotateAccountGatewayLocked(account, turn, model, reason, time.Now())
+}
+
+func (s *OpenAIGatewayService) rotateAccountGatewayLocked(account *Account, turn *astraGatewayTurn, model, reason string, now time.Time) ([]astraGatewaySlot, *AstraGatewayPoolTurn) {
+	removed := s.pruneGatewaySlotsLocked(now)
+	if turn == nil {
+		return removed, nil
+	}
+	turn.OverloadStreak = 0
 	ordered := s.usableGatewaySlotsLocked(now)
 	if len(ordered) == 0 {
-		turn.OverloadStreak = 0
-		return
+		return removed, nil
 	}
 	if turn.Used == nil {
 		turn.Used = map[string]struct{}{}
 	}
-	turn.Used[turn.Host] = struct{}{}
+	if turn.Host != "" {
+		turn.Used[turn.Host] = struct{}{}
+	}
 	next := firstUnusedGateway(ordered, turn.Used)
 	if next == nil {
 		turn.Used = map[string]struct{}{}
@@ -492,8 +534,6 @@ func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, m
 	turn.CookieKey = astraGatewaySlotKey(next.Host, next.AccountID, next.Cookies)
 	turn.Until = now.Add(astraGatewayTurnDuration)
 	turn.Used[next.Host] = struct{}{}
-	turn.OverloadStreak = 0
-	turnSave = gatewayTurnRecord(account.ID, turn)
 	recordCodexHarvestFlow(CodexHarvestFlowEvent{
 		Stage:       "probe",
 		Kind:        "gateway_turn",
@@ -502,8 +542,9 @@ func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, m
 		Model:       model,
 		Node:        next.Host,
 		Result:      "gateway_turn",
-		Detail:      "overload",
+		Detail:      reason,
 	})
+	return removed, gatewayTurnRecord(account.ID, turn)
 }
 
 func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) []astraGatewaySlot {

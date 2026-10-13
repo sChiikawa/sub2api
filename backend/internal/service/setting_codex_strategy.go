@@ -42,3 +42,14 @@ func (s *SettingService) CodexTicketCandyObservation(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexTicketCandyObservation)
 	return err == nil && value == "true"
 }
+
+// Missing or unreadable settings leave the gateway candy check disabled.
+const SettingKeyOpenAICodexGatewayCandyCheck = "openai_codex_gateway_candy_check"
+
+func (s *SettingService) CodexGatewayCandyCheck(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexGatewayCandyCheck)
+	return err == nil && value == "true"
+}

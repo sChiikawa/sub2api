@@ -98,6 +98,14 @@
             </label>
             <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。SSE Astra 票据用于真实请求后，异步发送一发糖果题并记录结果，额外消耗上游额度。结果不影响调度、票据或账号状态。', 'Off by default. After an SSE Astra ticket serves a real request, asynchronously send one candy question and record the result, using additional upstream quota. Results do not change scheduling, tickets, or account state.') }}</p>
           </div>
+          <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <label class="flex items-center gap-2 text-sm" for="codex-gateway-candy-check">
+              <input id="codex-gateway-candy-check" type="checkbox" v-model="form.openai_codex_gateway_candy_check" />
+              <span>{{ localText('网关轮转后用 Beta 糖果题检查当前网关', 'Check the current gateway with a Beta candy question after rotation') }}</span>
+              <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">Beta</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。业务请求成功结束后，用刚才那个网关再答一题糖果。答案不对或请求报错时，这个账号跳过当前网关。额外消耗上游额度，不重放刚才的业务请求。', 'Off by default. After a successful business request, ask one candy question through the gateway just used. A wrong answer or request error skips that gateway for this account. This uses extra upstream quota and does not replay the business request.') }}</p>
+          </div>
           <label class="mt-3 flex items-center gap-2 text-sm"><input id="codex-ticket-strict" type="checkbox" v-model="form.openai_codex_ticket_strict_response" />{{ localText('严格拦截票据响应不匹配（默认关闭）', 'Reject mismatched ticket responses (off by default)') }}</label>
           <p class="mt-1 text-xs text-gray-500">{{ localText('仅在 HTTP 响应头明确不匹配时拦截正文；当前请求可能已计费，不会自动重放。关闭时只更新后续票据调度。', 'Rejects the body when HTTP response state headers mismatch. The upstream may have charged; the request is not replayed. When off, only future ticket scheduling changes.') }}</p>
           <p class="mt-1 text-xs text-gray-500">{{ localText('切换策略保留有效主备票据和冷却。固定主用可能在失效后短暂等待新票。', 'Switching preserves valid tickets and cooldowns. Fixed primary may briefly wait for a new ticket after expiry.') }}</p>
@@ -136,6 +144,7 @@ function policyOf(settings: SystemSettings) {
     openai_codex_ticket_models: [...(settings.openai_codex_ticket_models ?? ['gpt-6-astra', 'gpt-5.6-sol'])],
     openai_codex_ticket_strategy: settings.openai_codex_ticket_strategy || 'standby',
     openai_codex_ticket_candy_observation: settings.openai_codex_ticket_candy_observation ?? false,
+    openai_codex_gateway_candy_check: settings.openai_codex_gateway_candy_check ?? false,
     openai_codex_ticket_strict_response: settings.openai_codex_ticket_strict_response ?? false,
     openai_codex_ticket_harvest_scope: {
       mode: scope?.mode || 'all', group_ids: [...(scope?.group_ids ?? [])],

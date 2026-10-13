@@ -657,6 +657,7 @@ export interface SystemSettings {
   openai_codex_ticket_harvest_scope?: { mode: 'all' | 'selected' | 'selected_accounts'; group_ids: number[]; account_policy: 'schedulable_only' | 'prioritize_schedulable' };
   openai_codex_ticket_strict_response?: boolean;
   openai_codex_ticket_candy_observation?: boolean;
+  openai_codex_gateway_candy_check?: boolean;
   openai_codex_ticket_harvest_proxy_url: string;
   openai_codex_ticket_static_proxy_url?: string;
   openai_codex_ticket_harvest_proxy_configured: boolean;
@@ -1029,6 +1030,7 @@ export interface UpdateSettingsRequest {
   openai_codex_ticket_use_saved_static_proxy?: boolean;
   openai_codex_ticket_strict_response?: boolean;
   openai_codex_ticket_candy_observation?: boolean;
+  openai_codex_gateway_candy_check?: boolean;
   openai_codex_ticket_models?: string[];
   claude_code_client_version?: string;
   claude_code_version_auto_sync_enabled?: boolean;

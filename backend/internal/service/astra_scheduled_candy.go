@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,84 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 		}
 		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: copy.Model, Reason: reason, Result: reason, Detail: reason})
 	}()
+}
+
+// observeGatewayRotationCandy asks the gateway just used by a business request
+// one Beta candy question. A wrong answer or any request error skips that
+// gateway for this account. The business response is never delayed or replayed.
+func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, headers http.Header, account *Account, model, host, cookie string) {
+	if s == nil || s.settingService == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || !s.settingService.CodexGatewayCandyCheck(ctx) {
+		return
+	}
+	if model == "" {
+		model = OpenAICodexStateProbeDefaultModel
+	}
+	key := strconv.FormatInt(account.ID, 10) + "\x00" + host
+	s.astraCandyMu.Lock()
+	if s.gatewayCandyRunning >= 2 {
+		s.astraCandyMu.Unlock()
+		return
+	}
+	if s.gatewayCandyInflight == nil {
+		s.gatewayCandyInflight = map[string]struct{}{}
+	}
+	if _, running := s.gatewayCandyInflight[key]; running {
+		s.astraCandyMu.Unlock()
+		return
+	}
+	s.gatewayCandyInflight[key] = struct{}{}
+	s.gatewayCandyRunning++
+	s.astraCandyMu.Unlock()
+	h := headers.Clone()
+	id, name := account.ID, account.Name
+	go func() {
+		defer func() {
+			s.astraCandyMu.Lock()
+			s.gatewayCandyRunning--
+			delete(s.gatewayCandyInflight, key)
+			s.astraCandyMu.Unlock()
+		}()
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cancel()
+		reason := s.runGatewayCandy(probeCtx, h, id, model, cookie)
+		kind := "candy_fail"
+		if reason == "candy_passed" {
+			kind = "candy_pass"
+		}
+		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: model, Node: host, Reason: reason, Result: reason, Detail: reason})
+		s.skipAccountGateway(&Account{ID: id, Name: name}, model, reason)
+	}()
+}
+
+func (s *OpenAIGatewayService) runGatewayCandy(ctx context.Context, headers http.Header, id int64, model, cookie string) string {
+	if s.settingService == nil || !s.settingService.CodexGatewayCandyCheck(ctx) {
+		return "candy_disabled"
+	}
+	if s.accountRepo == nil || s.httpUpstream == nil {
+		return "candy_unavailable"
+	}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil || account == nil || headers.Get("Authorization") == "" || !s.openAICodexTicketEnabledContext(ctx) {
+		return "candy_stale"
+	}
+	if headers.Get("ChatGPT-Account-ID") != "" && headers.Get("ChatGPT-Account-ID") != account.GetCredential("chatgpt_account_id") {
+		return "candy_stale"
+	}
+	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, func(req *http.Request) (*http.Response, error) {
+		return s.httpUpstream.Do(req, openAIAccountProxyURL(account), account.ID, account.Concurrency)
+	})
+	switch {
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
+		return "candy_timeout"
+	case err != nil || shot.status != http.StatusOK || shot.streamErr != nil:
+		return "candy_error"
+	case shot.model != "" && shot.model != model:
+		return "candy_model_mismatch"
+	case !CandyAnswerCorrect(shot.answer):
+		return "candy_incorrect"
+	default:
+		return "candy_passed"
+	}
 }
 
 func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket) string {

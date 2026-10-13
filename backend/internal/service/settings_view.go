@@ -15,6 +15,7 @@ type SystemSettings struct {
 	OpenAICodexTicketHarvestScope       CodexTicketHarvestScope
 	OpenAICodexTicketStrictResponse     bool
 	OpenAICodexTicketCandyObservation   bool
+	OpenAICodexGatewayCandyCheck        bool
 	OpenAICodexTicketFailClosed         bool
 	OpenAICodexTicketStrategy           string
 	RegistrationEnabled                 bool

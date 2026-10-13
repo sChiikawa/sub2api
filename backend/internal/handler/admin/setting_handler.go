@@ -313,6 +313,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAICodexTicketStrategy:                              settings.OpenAICodexTicketStrategy,
 		OpenAICodexTicketStrictResponse:                        settings.OpenAICodexTicketStrictResponse,
 		OpenAICodexTicketCandyObservation:                      settings.OpenAICodexTicketCandyObservation,
+		OpenAICodexGatewayCandyCheck:                           settings.OpenAICodexGatewayCandyCheck,
 		OpenAICodexTicketFailClosed:                            settings.OpenAICodexTicketFailClosed,
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL) != "",
 		OpenAICodexTicketModels:                                settings.OpenAICodexTicketModels,

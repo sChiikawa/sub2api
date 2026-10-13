@@ -405,6 +405,31 @@ func TestGatewayCredentialExpiryRetiresCookieInsideTheHour(t *testing.T) {
 	require.Equal(t, "active", list[0].Status)
 }
 
+func TestGatewayCandyFailureSkipsOnlyTheCurrentAccount(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
+	account := ticketTestAccount(7)
+	other := ticketTestAccount(8)
+	now := time.Now()
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-1"))
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-2"))
+	first, _ := s.currentAccountGateway(account, "gpt-5.4", now)
+	_, _ = s.currentAccountGateway(other, "gpt-5.4", now)
+	s.skipAccountGateway(account, "gpt-5.4", "candy_passed")
+	held, switched := s.currentAccountGateway(account, "gpt-5.4", now.Add(time.Second))
+	require.False(t, switched)
+	require.Equal(t, first.Host, held.Host)
+	s.skipAccountGateway(account, "gpt-5.4", "candy_incorrect")
+	moved, switched := s.currentAccountGateway(account, "gpt-5.4", now.Add(2*time.Second))
+	require.False(t, switched)
+	require.Equal(t, "chat.gateway.unified-2.api.openai.com", moved.Host)
+	untouched, switched := s.currentAccountGateway(other, "gpt-5.4", now.Add(2*time.Second))
+	require.False(t, switched)
+	require.Equal(t, first.Host, untouched.Host)
+	s.skipAccountGateway(account, "gpt-5.4", "candy_error")
+	again, _ := s.currentAccountGateway(account, "gpt-5.4", now.Add(3*time.Second))
+	require.Equal(t, first.Host, again.Host)
+}
+
 func TestThreeOverload503sSwitchToTheNextGateway(t *testing.T) {
 	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
 	account := ticketTestAccount(7)

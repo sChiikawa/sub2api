@@ -553,6 +553,8 @@ type OpenAIGatewayService struct {
 	astraCandyMu                   sync.Mutex
 	astraCandySeen                 map[[32]byte]time.Time
 	astraCandyRunning              int
+	gatewayCandyRunning            int
+	gatewayCandyInflight           map[string]struct{}
 	astraCandyVerdicts             map[[32]byte]astraCandyVerdict
 	astraGatewayMu                 sync.Mutex
 	astraGatewaySlots              map[string]astraGatewaySlot

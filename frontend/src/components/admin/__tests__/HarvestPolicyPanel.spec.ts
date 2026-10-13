@@ -168,6 +168,22 @@ describe('HarvestPolicyPanel', () => {
   })
 })
 
+it('defaults the gateway candy check off and persists both toggle states', async () => {
+  const wrapper = mountView()
+  await flushPromises()
+  const toggle = wrapper.get<HTMLInputElement>('#codex-gateway-candy-check')
+  expect(toggle.element.checked).toBe(false)
+  expect(wrapper.text()).toContain('跳过当前网关')
+  await toggle.setValue(true)
+  await wrapper.find('form').trigger('submit.prevent')
+  await flushPromises()
+  expect(updateSettings.mock.calls[0][0].openai_codex_gateway_candy_check).toBe(true)
+  await toggle.setValue(false)
+  await wrapper.find('form').trigger('submit.prevent')
+  await flushPromises()
+  expect(updateSettings.mock.calls[1][0].openai_codex_gateway_candy_check).toBe(false)
+})
+
 it('defaults beta candy observation off and persists both toggle states', async () => {
   const wrapper = mountView()
   await flushPromises()
