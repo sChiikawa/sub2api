@@ -1147,6 +1147,7 @@ func (s *OpenAIGatewayService) openAICodexTicketHarvestLoop(ctx context.Context)
 		case <-settingsWake:
 			s.resetHarvestWakeTimer(timer, lastRound)
 		case <-timer.C:
+			s.ArchiveExpiredAstraGateways()
 			s.refreshOpenAICodexTickets(ctx)
 			lastRound = time.Now()
 			s.armHarvestIntervalTimer(ctx, timer, lastRound)

@@ -16,7 +16,7 @@ import (
 )
 
 // A discovered OpenAI gateway keeps every account's route cookie that reached
-// it. Each cookie stays for one hour from its own save. The request uses the
+// it. Each cookie stays for one hour from its own save, then is deleted. The request uses the
 // cookie that remains valid the longest; the others stay as backups for the
 // same gateway. Each account uses one still-valid gateway for 240 seconds.
 // Gateways are not discovered in number order. The next turn is the smallest
@@ -189,10 +189,11 @@ func (s *OpenAIGatewayService) collectedAstraGatewaysAt(now time.Time) []AstraGa
 	return out
 }
 
-// ArchiveExpiredAstraGateways removes every gateway entry that can no longer
-// be used (the one-hour save passed, or its credential was retired) from the
-// pool and the database in one step. Usable entries and rotation progress are
-// left alone. It returns how many entries were archived.
+// ArchiveExpiredAstraGateways deletes every gateway entry that can no longer
+// be used. Entries whose one-hour save has passed are already removed when the
+// pool is read or a request rotates. This removes the ones retired early
+// because their credential expired, plus any expired entry not yet swept.
+// Usable entries and rotation progress stay. It returns how many were deleted.
 func (s *OpenAIGatewayService) ArchiveExpiredAstraGateways() int {
 	return s.archiveExpiredAstraGatewaysAt(time.Now())
 }
@@ -416,7 +417,7 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) []astraGatewaySlot {
 	var removed []astraGatewaySlot
 	for key, slot := range s.astraGatewaySlots {
-		if slot.ExpiresAt.IsZero() || !now.Before(slot.ExpiresAt.Add(astraGatewayCookieTTL)) {
+		if !gatewaySlotActive(slot, now) {
 			removed = append(removed, slot)
 			delete(s.astraGatewaySlots, key)
 		}
