@@ -426,7 +426,9 @@ func TestCandyPassedAccountIsPreferredUntilTheGatewayExpires(t *testing.T) {
 	require.Equal(t, 3, concurrency)
 	_, ok = s.candyPassedAccountSchedule(other.ID, now.Add(time.Minute))
 	require.False(t, ok)
-	_, ok = s.candyPassedAccountSchedule(account.ID, now.Add(31*time.Minute))
+	_, ok = s.candyPassedAccountSchedule(account.ID, now.Add(astraGatewayTurnDuration-time.Second))
+	require.True(t, ok)
+	_, ok = s.candyPassedAccountSchedule(account.ID, now.Add(astraGatewayTurnDuration))
 	require.False(t, ok)
 	order := preferCandyPassedAccounts([]openAIAccountCandidateScore{
 		{account: other},
@@ -452,7 +454,8 @@ func TestCandyPassWritesAccountConcurrencyAndRestoresItWhenTheGatewayExpires(t *
 	account.Extra = map[string]any{}
 	repo := &candyScheduleRepo{account: account}
 	s.accountRepo = repo
-	s.noteGatewayCandyTested(account.ID, "chat.gateway.unified-4.api.openai.com", now.Add(30*time.Minute), true)
+	first, _ := s.currentAccountGateway(account, "gpt-6-astra", now)
+	s.noteGatewayCandyTested(account.ID, first.Host, now.Add(time.Hour), true)
 	require.Equal(t, 3, account.Concurrency)
 	require.Equal(t, 1, account.Priority)
 	require.Equal(t, 1, account.Extra[gatewayCandySavedConcurrencyKey])
@@ -460,12 +463,8 @@ func TestCandyPassWritesAccountConcurrencyAndRestoresItWhenTheGatewayExpires(t *
 	s.syncCandyAccountSchedules()
 	require.Equal(t, 3, account.Concurrency)
 	require.Equal(t, 1, account.Extra[gatewayCandySavedConcurrencyKey])
-	s.astraGatewayMu.Lock()
-	s.astraGatewayCandyPass[account.ID]["chat.gateway.unified-4.api.openai.com"] = astraGatewayCandyAccountPass{
-		Host: "chat.gateway.unified-4.api.openai.com", Expires: now.Add(-time.Minute), Passed: true,
-	}
-	s.astraGatewayMu.Unlock()
-	s.restoreExpiredCandyAccountSchedules()
+	_, switched := s.currentAccountGateway(account, "gpt-6-astra", now.Add(astraGatewayTurnDuration))
+	require.True(t, switched)
 	require.Equal(t, 1, account.Concurrency)
 	require.Equal(t, 20, account.Priority)
 }

@@ -371,10 +371,14 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 	s.seedGatewayCookiesFromTickets()
 	var removed []astraGatewaySlot
 	var turnSave *AstraGatewayPoolTurn
+	var restoreSchedule bool
 	defer func() {
 		deleteAstraGatewaySlots(removed)
 		if turnSave != nil {
 			saveAstraGatewayTurn(*turnSave)
+		}
+		if restoreSchedule {
+			s.restoreCandyAccountSchedule(account.ID)
 		}
 	}()
 	s.astraGatewayMu.Lock()
@@ -397,6 +401,9 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 			turnSave = gatewayTurnRecord(account.ID, turn)
 			return cloneGatewaySlot(slot), false
 		}
+	}
+	if turn != nil && turn.Host != "" && s.turnHostCandyPassedLocked(account.ID, turn.Host) {
+		restoreSchedule = true
 	}
 	if turn == nil {
 		turn = &astraGatewayTurn{Used: map[string]struct{}{}}
@@ -464,10 +471,14 @@ func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, m
 	s.ensureAstraGatewayStore()
 	var removed []astraGatewaySlot
 	var turnSave *AstraGatewayPoolTurn
+	var restoreSchedule bool
 	defer func() {
 		deleteAstraGatewaySlots(removed)
 		if turnSave != nil {
 			saveAstraGatewayTurn(*turnSave)
+		}
+		if restoreSchedule {
+			s.restoreCandyAccountSchedule(account.ID)
 		}
 	}()
 	s.astraGatewayMu.Lock()
@@ -484,7 +495,7 @@ func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, m
 	if turn.OverloadStreak < astraGatewayOverloadStreak {
 		return
 	}
-	removed, turnSave = s.rotateAccountGatewayLocked(account, turn, model, "overload", now)
+	removed, turnSave, restoreSchedule = s.rotateAccountGatewayLocked(account, turn, model, "overload", now)
 }
 
 func gatewayCandySkipsRotation(reason string) bool {
@@ -505,10 +516,14 @@ func (s *OpenAIGatewayService) skipAccountGateway(account *Account, model, reaso
 	s.ensureAstraGatewayStore()
 	var removed []astraGatewaySlot
 	var turnSave *AstraGatewayPoolTurn
+	var restoreSchedule bool
 	defer func() {
 		deleteAstraGatewaySlots(removed)
 		if turnSave != nil {
 			saveAstraGatewayTurn(*turnSave)
+		}
+		if restoreSchedule {
+			s.restoreCandyAccountSchedule(account.ID)
 		}
 	}()
 	s.astraGatewayMu.Lock()
@@ -517,7 +532,7 @@ func (s *OpenAIGatewayService) skipAccountGateway(account *Account, model, reaso
 	if turn == nil || turn.Host == "" {
 		return
 	}
-	removed, turnSave = s.rotateAccountGatewayLocked(account, turn, model, reason, time.Now())
+	removed, turnSave, restoreSchedule = s.rotateAccountGatewayLocked(account, turn, model, reason, time.Now())
 }
 
 func (s *OpenAIGatewayService) gatewayCandyConcurrency(ctx context.Context) int {
@@ -532,7 +547,13 @@ func (s *OpenAIGatewayService) noteGatewayCandyTested(accountID int64, host stri
 		return
 	}
 	s.ensureAstraGatewayStore()
+	now := time.Now()
 	s.astraGatewayMu.Lock()
+	if passed {
+		if turn := s.astraGatewayTurns[accountID]; turn != nil && turn.Host == host && now.Before(turn.Until) {
+			expires = turn.Until
+		}
+	}
 	if s.astraGatewayCandyPass == nil {
 		s.astraGatewayCandyPass = map[int64]map[string]astraGatewayCandyAccountPass{}
 	}
@@ -715,18 +736,24 @@ func (s *OpenAIGatewayService) gatewayCandyAlreadyTested(accountID int64, host s
 	return tested
 }
 
-func (s *OpenAIGatewayService) candyPassActiveLocked(accountID int64, now time.Time) bool {
-	for host, pass := range s.astraGatewayCandyPass[accountID] {
-		if pass.Passed && !pass.Expires.IsZero() && now.Before(pass.Expires) && s.gatewayHostActiveLocked(host, now) {
-			return true
-		}
-	}
-	return false
+func (s *OpenAIGatewayService) turnHostCandyPassedLocked(accountID int64, host string) bool {
+	pass, ok := s.astraGatewayCandyPass[accountID][host]
+	return ok && pass.Passed
 }
 
-// candyPassedAccountSchedule reports that this account passed Beta candy on a
-// gateway that is still active. Scheduling picks it first and uses the
-// configured concurrency only until that gateway expires.
+func (s *OpenAIGatewayService) candyPassActiveLocked(accountID int64, now time.Time) bool {
+	turn := s.astraGatewayTurns[accountID]
+	if turn == nil || turn.Host == "" || !now.Before(turn.Until) {
+		return false
+	}
+	pass, ok := s.astraGatewayCandyPass[accountID][turn.Host]
+	return ok && pass.Passed && pass.Expires.Equal(turn.Until)
+}
+
+// candyPassedAccountSchedule reports that this account passed Beta candy on
+// the gateway it is using right now. Scheduling picks it first and uses the
+// configured concurrency only for this 240-second turn. The next gateway, or
+// the end of these 240 seconds, restores the account.
 func (s *OpenAIGatewayService) candyPassedAccountSchedule(accountID int64, now time.Time) (int, bool) {
 	if s == nil || accountID <= 0 {
 		return 0, false
@@ -750,15 +777,16 @@ func (s *OpenAIGatewayService) gatewayHostActiveLocked(host string, now time.Tim
 	return false
 }
 
-func (s *OpenAIGatewayService) rotateAccountGatewayLocked(account *Account, turn *astraGatewayTurn, model, reason string, now time.Time) ([]astraGatewaySlot, *AstraGatewayPoolTurn) {
+func (s *OpenAIGatewayService) rotateAccountGatewayLocked(account *Account, turn *astraGatewayTurn, model, reason string, now time.Time) ([]astraGatewaySlot, *AstraGatewayPoolTurn, bool) {
 	removed := s.pruneGatewaySlotsLocked(now)
 	if turn == nil {
-		return removed, nil
+		return removed, nil, false
 	}
+	restore := turn.Host != "" && s.turnHostCandyPassedLocked(account.ID, turn.Host)
 	turn.OverloadStreak = 0
 	ordered := s.usableGatewaySlotsLocked(now)
 	if len(ordered) == 0 {
-		return removed, nil
+		return removed, nil, restore
 	}
 	if turn.Used == nil {
 		turn.Used = map[string]struct{}{}
@@ -785,7 +813,7 @@ func (s *OpenAIGatewayService) rotateAccountGatewayLocked(account *Account, turn
 		Result:      "gateway_turn",
 		Detail:      reason,
 	})
-	return removed, gatewayTurnRecord(account.ID, turn)
+	return removed, gatewayTurnRecord(account.ID, turn), restore
 }
 
 func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) []astraGatewaySlot {
