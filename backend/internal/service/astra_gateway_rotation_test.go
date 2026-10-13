@@ -235,6 +235,22 @@ func TestGatewayPoolAndTurnSurviveRestart(t *testing.T) {
 	require.Equal(t, slot.Host, again.Host)
 }
 
+func TestGatewayRotationRunsWhileAstraReuseIsOff(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
+	s.cfg.Gateway.CodexGatewayPin.Enabled = false
+	require.False(t, s.UnifiedAstraTicketsEnabled(context.Background()))
+	require.True(t, s.codexGatewayRotationEnabled(context.Background()))
+	s.rememberGatewayCookie(mint780Pair(time.Now().Add(time.Hour), "unified-4"))
+	account := ticketTestAccount(7)
+	header := http.Header{}
+	require.NoError(t, s.applyOpenAICodexTicket(context.Background(), account, "gpt-5.4", header))
+	require.Equal(t, "chat.gateway.unified-4.api.openai.com", codex780CookieGatewayHost(strings.Split(header.Get("Cookie"), "; ")))
+	turns := s.CollectedAstraGatewayTurns()
+	require.Len(t, turns, 1)
+	require.Equal(t, int64(7), turns[0].AccountID)
+	require.Equal(t, "chat.gateway.unified-4.api.openai.com", turns[0].Host)
+}
+
 func TestGatewayRotationCoversEveryCodexOAuthModel(t *testing.T) {
 	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
 	s.accountRepo = &astraTicketRepo{accounts: map[int64]*Account{}}

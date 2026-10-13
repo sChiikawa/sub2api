@@ -41,10 +41,14 @@ func IsBoundAstraTicketRequest(ctx context.Context) bool {
 	return bound
 }
 
-func (s *OpenAIGatewayService) UnifiedAstraTicketsEnabled(ctx context.Context) bool {
-	return s != nil && s.cfg != nil && s.accountRepo != nil &&
+func (s *OpenAIGatewayService) codexGatewayRotationEnabled(ctx context.Context) bool {
+	return s != nil && s.cfg != nil &&
 		s.openAICodexTicketEnabledContext(ctx) && s.openAICodexTicketConfig().TargetLength == 780 &&
-		s.openAICodexTicketGatedModel(OpenAICodexStateProbeDefaultModel) && s.cfg.AstraRouting(ctx).CookiePool.Enabled
+		s.openAICodexTicketGatedModel(OpenAICodexStateProbeDefaultModel)
+}
+
+func (s *OpenAIGatewayService) UnifiedAstraTicketsEnabled(ctx context.Context) bool {
+	return s.codexGatewayRotationEnabled(ctx) && s.accountRepo != nil && s.cfg.AstraRouting(ctx).CookiePool.Enabled
 }
 
 func astraTicketAccountEligible(ctx context.Context, a *Account) bool {

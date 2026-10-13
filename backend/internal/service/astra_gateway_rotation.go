@@ -598,7 +598,7 @@ func astraRouteCookiePair(cookies []string) ([]string, string) {
 }
 
 func (s *OpenAIGatewayService) shouldRotateCodexOAuthGateway(ctx context.Context, account *Account, model string) bool {
-	if s == nil || account == nil || !account.IsOpenAIOAuth() || account.IsShadow() || !s.UnifiedAstraTicketsEnabled(ctx) {
+	if s == nil || account == nil || !account.IsOpenAIOAuth() || account.IsShadow() || !s.codexGatewayRotationEnabled(ctx) {
 		return false
 	}
 	if account.isExcelBPSAllModelsEnabled() || account.isExcelBPSUpstreamModelEnabled(model) {
