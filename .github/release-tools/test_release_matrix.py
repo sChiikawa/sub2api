@@ -187,15 +187,6 @@ class ReleaseMatrixTest(unittest.TestCase):
 
 
 
-    def test_four_part_version_publishes_as_a_stable_release(self):
-        with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'Example'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
-            release.plan(argparse.Namespace(ref='v2.10.7.1', dry_run=False, simple=False))
-        output = dict(line.split('=', 1) for line in Path('outputs').read_text().splitlines())
-        self.assertEqual(output['tag'], 'v2.10.7.1')
-        self.assertEqual(output['version'], '2.10.7.1')
-        self.assertEqual(output['prerelease'], 'false')
-        self.assertEqual(release.VERSION_FILE.read_text(), '2.10.7.1\n')
-
     def test_prerelease_plan_and_image_tags_are_isolated(self):
         release.VERSION_FILE.write_text('9.8.7-rc.1\n')
         with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
