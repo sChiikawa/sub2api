@@ -109,12 +109,35 @@ describe('HarvestPolicyPanel', () => {
     expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty('astra_scheduling')
   })
 
-  it('preserves the legacy scope until an account scope is explicitly selected', async () => {
-    const legacy = { mode: 'selected', group_ids: [24], account_policy: 'schedulable_only' }
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_scope: legacy })
+  it('selects OAuth accounts by group and saves the chosen group ids', async () => {
+    getGroups.mockResolvedValue([
+      { id: 24, name: 'Codex A', platform: 'openai' },
+      { id: 25, name: 'Codex B', platform: 'openai' },
+      { id: 30, name: 'Claude', platform: 'anthropic' },
+    ])
     const wrapper = mountView()
     await flushPromises()
-    expect(wrapper.text()).toContain('当前仍使用旧分组范围')
+    expect(getGroups).not.toHaveBeenCalled()
+    await wrapper.get('#codex-ticket-harvest-scope').setValue('selected')
+    await flushPromises()
+    expect(wrapper.find('#codex-ticket-group-24').exists()).toBe(true)
+    expect(wrapper.find('#codex-ticket-group-30').exists()).toBe(false)
+    expect(wrapper.text()).toContain('未选择分组')
+    await wrapper.get('#codex-ticket-group-25').setValue(true)
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateSettings.mock.calls[0]?.[0].openai_codex_ticket_harvest_scope).toEqual({
+      mode: 'selected', group_ids: [25], account_policy: 'prioritize_schedulable',
+    })
+  })
+
+  it('keeps a saved group scope and its group ids until the scope is changed', async () => {
+    const legacy = { mode: 'selected', group_ids: [24], account_policy: 'schedulable_only' }
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_scope: legacy })
+    getGroups.mockResolvedValue([{ id: 24, name: 'Codex A', platform: 'openai' }])
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#codex-ticket-group-24').element.checked).toBe(true)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
     expect(updateSettings.mock.calls[0]?.[0].openai_codex_ticket_harvest_scope).toEqual(legacy)

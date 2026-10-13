@@ -116,6 +116,37 @@ func TestGatewayCookieIsSavedForOneHour(t *testing.T) {
 	require.Empty(t, s.collectedAstraGatewaysAt(start.Add(2*time.Hour)))
 }
 
+func TestArchiveExpiredGatewaysKeepsUsableOnes(t *testing.T) {
+	store := &memoryGatewayPool{}
+	BindAstraGatewayPoolRepository(store)
+	t.Cleanup(func() { BindAstraGatewayPoolRepository(nil) })
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	start := time.Date(2026, 10, 12, 13, 0, 0, 0, time.UTC)
+	s.rememberGatewayCookieFrom(1, "old", mint780Pair(start.Add(3*time.Hour), "unified-10"), start)
+	s.rememberGatewayCookieFrom(2, "retired", mint780Pair(start.Add(70*time.Minute), "unified-11"), start.Add(60*time.Minute))
+	s.rememberGatewayCookieFrom(3, "fresh", mint780Pair(start.Add(3*time.Hour), "unified-12"), start.Add(90*time.Minute))
+	now := start.Add(100 * time.Minute)
+
+	before := s.collectedAstraGatewaysAt(now)
+	statuses := map[string]string{}
+	for _, entry := range before {
+		statuses[entry.Host] = entry.Status
+	}
+	require.Equal(t, "expired", statuses["chat.gateway.unified-10.api.openai.com"])
+	require.Equal(t, "retired", statuses["chat.gateway.unified-11.api.openai.com"])
+	require.Equal(t, "active", statuses["chat.gateway.unified-12.api.openai.com"])
+
+	require.Equal(t, 2, s.archiveExpiredAstraGatewaysAt(now))
+	after := s.collectedAstraGatewaysAt(now)
+	require.Len(t, after, 1)
+	require.Equal(t, "chat.gateway.unified-12.api.openai.com", after[0].Host)
+	require.Equal(t, "active", after[0].Status)
+	require.Len(t, store.slots, 1)
+	require.Equal(t, 0, s.archiveExpiredAstraGatewaysAt(now))
+	var missing *OpenAIGatewayService
+	require.Equal(t, 0, missing.ArchiveExpiredAstraGateways())
+}
+
 type memoryGatewayPool struct {
 	slots []AstraGatewayPoolSlot
 	turns []AstraGatewayPoolTurn

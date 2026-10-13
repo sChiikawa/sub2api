@@ -402,6 +402,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/astra-gateway/history", h.Admin.Account.AstraGatewayHistory)
 		accounts.POST("/astra-gateway/test", h.Admin.Account.AstraGatewayTest)
 		accounts.GET("/codex-harvest-flow", h.Admin.Account.GetCodexHarvestFlow)
+		accounts.POST("/codex-harvest-flow/gateways/archive-expired", h.Admin.Account.ArchiveExpiredCodexGateways)
 		accounts.GET("/codex-harvest-controls", h.Admin.Account.GetCodexHarvestControls)
 		accounts.PUT("/codex-harvest-controls", h.Admin.Account.UpdateCodexHarvestControls)
 		accounts.GET("/codex-harvest-nodes", h.Admin.Account.GetCodexHarvestNodes)

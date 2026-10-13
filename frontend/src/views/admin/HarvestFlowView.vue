@@ -122,7 +122,18 @@
         <div class="card p-5" data-testid="gateway-pool">
           <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayPool') }}</h2>
-            <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { unique: gatewayUniqueCount, total: snapshot.gateways?.length || 0 }) }}</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { unique: gatewayUniqueCount, total: snapshot.gateways?.length || 0 }) }}</span>
+              <button
+                type="button"
+                data-testid="gateway-archive-expired"
+                class="btn btn-secondary btn-sm"
+                :disabled="archivingGateways || !gatewayExpiredCount"
+                @click="archiveExpiredGateways"
+              >
+                {{ t('admin.harvestFlow.gatewayArchiveExpired', { n: gatewayExpiredCount }) }}
+              </button>
+            </div>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.gatewayPoolHint') }}</p>
           <p v-if="!snapshot.gateways?.length" class="mt-3 text-sm text-gray-500">{{ t('admin.harvestFlow.gatewayPoolEmpty') }}</p>
@@ -186,7 +197,7 @@
             <div v-if="!snapshot.accounts?.length" class="text-sm text-gray-500">{{ t('admin.harvestFlow.noAccounts') }}</div>
             <div v-else class="grid grid-cols-1 gap-3">
               <div
-                v-for="account in snapshot.accounts"
+                v-for="account in pagedAccounts"
                 :key="account.id"
                 data-test="harvest-account-card"
                 class="flex min-h-[13.75rem] flex-col rounded-2xl border border-gray-100 p-4 dark:border-dark-700"
@@ -235,6 +246,16 @@
                 </div>
               </div>
             </div>
+            <Pagination
+              v-if="(snapshot.accounts?.length ?? 0) > 0"
+              data-test="harvest-account-pagination"
+              class="mt-4 rounded-xl border"
+              :total="snapshot.accounts?.length ?? 0"
+              :page="accountPage"
+              :page-size="accountPageSize"
+              @update:page="accountPage = $event"
+              @update:page-size="accountPageSize = $event; accountPage = 1"
+            />
           </div>
 
           <div class="card min-w-0 p-5 xl:col-span-3">
@@ -295,20 +316,52 @@
 
 <script setup lang="ts">
 import HarvestPolicyPanel from '@/components/admin/HarvestPolicyPanel.vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import HarvestControlsPanel from '@/components/admin/HarvestControlsPanel.vue'
 import HarvestNodeRecords from '@/components/admin/HarvestNodeRecords.vue'
-import { getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway } from '@/api/admin/accounts'
+import { archiveExpiredCodexGateways, getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway } from '@/api/admin/accounts'
 import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarvestAvailability } from '@/utils/harvestAvailability'
 
 const { t } = useI18n()
 const snapshot = ref<CodexHarvestFlowSnapshot | null>(null)
+const accountPage = ref(1)
+const accountPageSize = ref(10)
+const pagedAccounts = computed(() => {
+  const accounts = snapshot.value?.accounts || []
+  const pages = Math.max(1, Math.ceil(accounts.length / accountPageSize.value))
+  const page = Math.min(Math.max(accountPage.value, 1), pages)
+  return accounts.slice((page - 1) * accountPageSize.value, page * accountPageSize.value)
+})
+watch(() => snapshot.value?.accounts?.length ?? 0, (total) => {
+  const pages = Math.max(1, Math.ceil(total / accountPageSize.value))
+  if (accountPage.value > pages) accountPage.value = pages
+})
 const expandedGatewayHosts = ref<Record<string, boolean>>({})
+const archivingGateways = ref(false)
+const gatewayExpiredCount = computed(() => (snapshot.value?.gateways || []).filter(gateway => gateway.status === 'expired' || gateway.status === 'retired').length)
+async function archiveExpiredGateways() {
+  if (disposed || archivingGateways.value || !gatewayExpiredCount.value) return
+  archivingGateways.value = true
+  errorMessage.value = ''
+  let archived = false
+  try {
+    await archiveExpiredCodexGateways()
+    archived = true
+  } catch (error) {
+    if (disposed) return
+    const err = error as { message?: string }
+    errorMessage.value = err?.message || String(error)
+  } finally {
+    if (!disposed) archivingGateways.value = false
+  }
+  if (archived && !disposed) await fetchFlow()
+}
 const gatewayUniqueCount = computed(() => new Set((snapshot.value?.gateways || []).map(gateway => gateway.host)).size)
 const gatewayGroups = computed(() => {
   const groups: { host: string; rows: CodexHarvestGateway[]; backups: CodexHarvestGateway[] }[] = []

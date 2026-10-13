@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // A discovered OpenAI gateway keeps every account's route cookie that reached
@@ -122,6 +125,35 @@ func (s *OpenAIGatewayService) collectedAstraGatewaysAt(now time.Time) []AstraGa
 		out[i].Order = i + 1
 	}
 	return out
+}
+
+// ArchiveExpiredAstraGateways removes every gateway entry that can no longer
+// be used (the one-hour save passed, or its credential was retired) from the
+// pool and the database in one step. Usable entries and rotation progress are
+// left alone. It returns how many entries were archived.
+func (s *OpenAIGatewayService) ArchiveExpiredAstraGateways() int {
+	return s.archiveExpiredAstraGatewaysAt(time.Now())
+}
+
+func (s *OpenAIGatewayService) archiveExpiredAstraGatewaysAt(now time.Time) int {
+	if s == nil {
+		return 0
+	}
+	s.ensureAstraGatewayStore()
+	var removed []astraGatewaySlot
+	defer func() { deleteAstraGatewaySlots(removed) }()
+	s.astraGatewayMu.Lock()
+	defer s.astraGatewayMu.Unlock()
+	for key, slot := range s.astraGatewaySlots {
+		if !gatewaySlotActive(slot, now) {
+			removed = append(removed, slot)
+			delete(s.astraGatewaySlots, key)
+		}
+	}
+	if len(removed) > 0 {
+		logger.L().Info("astra gateway pool archived expired entries", zap.Int("count", len(removed)))
+	}
+	return len(removed)
 }
 
 func (s *OpenAIGatewayService) rememberGatewayCookie(cookies []string) {

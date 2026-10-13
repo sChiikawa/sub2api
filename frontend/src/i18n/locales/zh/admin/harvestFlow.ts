@@ -75,6 +75,7 @@ export default {
     gatewayStatusRetired: '已淘汰',
     gatewayStatusExpired: '已到期',
     gatewayCredentialExpired: '有效期内凭证已过期',
+    gatewayArchiveExpired: '一键归档已到期（{n}）',
     gatewayBackup: '备用',
     gatewayBackups: '{n} 个备用',
     gatewayBackupsHide: '收起 {n} 个备用',

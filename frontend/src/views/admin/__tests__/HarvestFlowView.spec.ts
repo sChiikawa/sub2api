@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import HarvestFlowView from '../HarvestFlowView.vue'
 
-const { getFlow, updateSkip } = vi.hoisted(() => ({ getFlow: vi.fn(), updateSkip: vi.fn() }))
+const { getFlow, updateSkip, archiveGateways } = vi.hoisted(() => ({ getFlow: vi.fn(), updateSkip: vi.fn(), archiveGateways: vi.fn() }))
 
 vi.mock('@/api/admin/accounts', () => ({
   getCodexHarvestFlow: getFlow,
-  updateCodexSkipHarvest: updateSkip
+  updateCodexSkipHarvest: updateSkip,
+  archiveExpiredCodexGateways: archiveGateways
 }))
 vi.mock('@/components/admin/HarvestPolicyPanel.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/HarvestControlsPanel.vue', () => ({ default: { template: '<section />' } }))
@@ -112,6 +113,29 @@ describe('HarvestFlowView nullable API lists', () => {
       expect(pool.text()).toContain('admin.harvestFlow.gatewayCredentialExpired')
       expect(pool.text()).not.toContain('__oailb')
       expect(pool.text()).not.toContain('__cflb')
+    } finally { wrapper.unmount() }
+  })
+
+  it('archives every expired and retired gateway in one click', async () => {
+    const live = { host: 'chat.gateway.unified-3.api.openai.com', order: 1, has_cookie: true, status: 'active', role: 'primary', remaining_seconds: 600 }
+    const expired = { host: 'chat.gateway.unified-1.api.openai.com', order: 2, has_cookie: true, status: 'expired', remaining_seconds: 0 }
+    const retired = { host: 'chat.gateway.unified-2.api.openai.com', order: 3, has_cookie: true, status: 'retired', reason: 'credential_expired', remaining_seconds: 300 }
+    getFlow.mockResolvedValueOnce({ ...response(), gateways: [expired, retired, live] })
+    getFlow.mockResolvedValue({ ...response(), gateways: [live] })
+    archiveGateways.mockResolvedValue({ archived: 2 })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      const button = wrapper.get('[data-testid="gateway-archive-expired"]')
+      expect(button.text()).toContain('admin.harvestFlow.gatewayArchiveExpired 2')
+      await button.trigger('click')
+      await flushPromises()
+      expect(archiveGateways).toHaveBeenCalledTimes(1)
+      const pool = wrapper.get('[data-testid="gateway-pool"]')
+      expect(pool.text()).not.toContain('unified-1.api')
+      expect(pool.text()).not.toContain('unified-2.api')
+      expect(pool.text()).toContain('unified-3.api')
+      expect(wrapper.get('[data-testid="gateway-archive-expired"]').attributes('disabled')).toBeDefined()
     } finally { wrapper.unmount() }
   })
 
@@ -515,6 +539,22 @@ describe('HarvestFlowView account cards', () => {
     expect(cards[0]!.text()).not.toContain('admin.harvestFlow.skipHarvestHint')
     expect(cards[0]!.text()).toContain('admin.harvestFlow.availability.available')
     expect(cards[1]!.text()).toContain('admin.harvestFlow.availability.available')
+  })
+
+  it('paginates the ticket account list', async () => {
+    const data = accountsPayload()
+    const template = data.accounts[0]!
+    data.accounts = Array.from({ length: 25 }, (_, index) => ({ ...template, id: index + 1, name: `Account ${index + 1}` }))
+    getFlow.mockResolvedValue(data)
+    wrapper = mountFlow()
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="harvest-account-card"]')).toHaveLength(10)
+    expect(wrapper.text()).toContain('Account 1')
+    expect(wrapper.text()).not.toContain('Account 11')
+    await wrapper.get('[data-test="harvest-account-pagination"] button[aria-label="pagination.goToPage 3"]').trigger('click')
+    const cards = wrapper.findAll('[data-test="harvest-account-card"]')
+    expect(cards).toHaveLength(5)
+    expect(cards[0]!.text()).toContain('Account 21')
   })
 
   it('counts remaining from expires_at instead of a stale snapshot second', async () => {

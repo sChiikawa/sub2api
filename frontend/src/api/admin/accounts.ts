@@ -1318,6 +1318,11 @@ export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {
   return data
 }
 
+export async function archiveExpiredCodexGateways(): Promise<{ archived: number }> {
+  const { data } = await apiClient.post<{ archived: number }>('/admin/accounts/codex-harvest-flow/gateways/archive-expired')
+  return data
+}
+
 export async function updateCodexSkipHarvest(id: number, skipHarvest: boolean): Promise<{ account_id: number; skip_harvest: boolean }> {
   const { data } = await apiClient.put<{ account_id: number; skip_harvest: boolean }>(`/admin/accounts/${id}/codex-skip-harvest`, {
     skip_harvest: skipHarvest
@@ -1525,6 +1530,7 @@ export const accountsAPI = {
   refreshOllamaCloudUsage,
   getCodexHarvestFlow,
   updateCodexSkipHarvest,
+  archiveExpiredCodexGateways,
   streamManualCodexHarvest,
   getOpenCodeGoUsageSettings,
   updateOpenCodeGoUsageSettings,

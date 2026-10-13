@@ -75,6 +75,7 @@ export default {
     gatewayStatusRetired: 'Retired',
     gatewayStatusExpired: 'Expired',
     gatewayCredentialExpired: 'Credential expired during the saved hour',
+    gatewayArchiveExpired: 'Archive all expired ({n})',
     gatewayBackup: 'Backup',
     gatewayBackups: '{n} backups',
     gatewayBackupsHide: 'Hide {n} backups',

@@ -40,6 +40,16 @@ func (h *AccountHandler) GetCodexHarvestFlow(c *gin.Context) {
 	response.Success(c, snapshot)
 }
 
+// ArchiveExpiredCodexGateways removes expired and retired gateways from the pool.
+// POST /api/v1/admin/accounts/codex-harvest-flow/gateways/archive-expired
+func (h *AccountHandler) ArchiveExpiredCodexGateways(c *gin.Context) {
+	if h == nil || h.openAIGatewayService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Gateway service not available")
+		return
+	}
+	response.Success(c, gin.H{"archived": h.openAIGatewayService.ArchiveExpiredAstraGateways()})
+}
+
 // SetCodexSkipHarvest stops background ticket probes for this account.
 // The account stays schedulable: own leftover tickets may still be used,
 // and missing tickets do not fail-close the account.
