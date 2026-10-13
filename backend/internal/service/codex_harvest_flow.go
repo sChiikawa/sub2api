@@ -123,15 +123,16 @@ type CodexHarvestFlowCounts struct {
 }
 
 type CodexHarvestFlowSnapshot struct {
-	GeneratedAt time.Time                 `json:"generated_at"`
-	Harvest     CodexHarvestFlowHarvest   `json:"harvest"`
-	Sidecar     CodexHarvestFlowSidecar   `json:"sidecar"`
-	Stages      []CodexHarvestFlowStage   `json:"stages"`
-	Accounts    []CodexHarvestFlowAccount `json:"accounts"`
-	Counts      CodexHarvestFlowCounts    `json:"counts"`
-	Events      []CodexHarvestFlowEvent   `json:"events"`
-	Gateways    []AstraGatewayPoolEntry   `json:"gateways"`
-	Runtime     *CodexHarvestRuntime      `json:"runtime,omitempty"`
+	GeneratedAt  time.Time                 `json:"generated_at"`
+	Harvest      CodexHarvestFlowHarvest   `json:"harvest"`
+	Sidecar      CodexHarvestFlowSidecar   `json:"sidecar"`
+	Stages       []CodexHarvestFlowStage   `json:"stages"`
+	Accounts     []CodexHarvestFlowAccount `json:"accounts"`
+	Counts       CodexHarvestFlowCounts    `json:"counts"`
+	Events       []CodexHarvestFlowEvent   `json:"events"`
+	Gateways     []AstraGatewayPoolEntry   `json:"gateways"`
+	GatewayTurns []AstraGatewayTurnView    `json:"gateway_turns"`
+	Runtime      *CodexHarvestRuntime      `json:"runtime,omitempty"`
 }
 
 type CodexHarvestFlowRepository interface {

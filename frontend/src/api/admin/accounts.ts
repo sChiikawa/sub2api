@@ -1296,7 +1296,16 @@ export interface CodexHarvestFlowSnapshot {
   }
   events: CodexHarvestFlowEvent[]
   gateways?: CodexHarvestGateway[]
+  gateway_turns?: CodexHarvestGatewayTurn[]
   runtime?: CodexHarvestRuntime
+}
+
+export interface CodexHarvestGatewayTurn {
+  account_id: number
+  host: string
+  until?: string
+  remaining_seconds?: number
+  used_hosts?: string[]
 }
 
 export interface CodexHarvestGateway {

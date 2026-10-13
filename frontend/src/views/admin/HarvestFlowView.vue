@@ -136,6 +136,18 @@
             </div>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.gatewayPoolHint') }}</p>
+          <div class="mt-3 rounded-xl border border-gray-100 p-3 dark:border-dark-700" data-testid="gateway-turns">
+            <h3 class="text-xs font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayTurns') }}</h3>
+            <p v-if="!snapshot.gateway_turns?.length" class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.harvestFlow.gatewayTurnsEmpty') }}</p>
+            <ul v-else class="mt-2 space-y-2">
+              <li v-for="turn in snapshot.gateway_turns" :key="turn.account_id" class="text-xs text-gray-600 dark:text-gray-300">
+                <span class="font-medium text-gray-900 dark:text-white">#{{ turn.account_id }} {{ gatewayTurnName(turn) }}</span>
+                <span class="mt-0.5 block font-mono text-[11px]">{{ turn.host }}</span>
+                <span class="mt-0.5 block">{{ gatewayTurnRemainText(turn) }}</span>
+                <span class="mt-0.5 block text-[11px] text-gray-400">{{ t('admin.harvestFlow.gatewayTurnUsed', { hosts: (turn.used_hosts || []).join('、') }) }}</span>
+              </li>
+            </ul>
+          </div>
           <p v-if="!snapshot.gateways?.length" class="mt-3 text-sm text-gray-500">{{ t('admin.harvestFlow.gatewayPoolEmpty') }}</p>
           <div v-else class="mt-3 overflow-x-auto">
             <table class="min-w-full text-left text-sm">
@@ -325,7 +337,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import HarvestControlsPanel from '@/components/admin/HarvestControlsPanel.vue'
 import HarvestNodeRecords from '@/components/admin/HarvestNodeRecords.vue'
-import { archiveExpiredCodexGateways, getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway } from '@/api/admin/accounts'
+import { archiveExpiredCodexGateways, getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway, type CodexHarvestGatewayTurn } from '@/api/admin/accounts'
 import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarvestAvailability } from '@/utils/harvestAvailability'
 
 const { t } = useI18n()
@@ -588,6 +600,16 @@ function recoverText(account: CodexHarvestFlowAccount) {
   return recovered.date
     ? t('admin.harvestFlow.availability.recoverLater', { date: recovered.date, time: recovered.clock })
     : t('admin.harvestFlow.availability.recoverToday', { time: recovered.clock })
+}
+
+function gatewayTurnName(turn: CodexHarvestGatewayTurn) {
+  return snapshot.value?.accounts?.find(account => account.id === turn.account_id)?.name || ''
+}
+
+function gatewayTurnRemainText(turn: CodexHarvestGatewayTurn) {
+  const left = secondsUntil(turn.until) ?? Math.max(0, turn.remaining_seconds || 0)
+  if (left <= 0) return t('admin.harvestFlow.gatewayTurnDue')
+  return t('admin.harvestFlow.gatewayTurnRemaining', { time: formatRemaining(left) })
 }
 
 function gatewayStatusLabel(status?: string) {

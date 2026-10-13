@@ -36,6 +36,7 @@ func (h *AccountHandler) GetCodexHarvestFlow(c *gin.Context) {
 	snapshot := service.BuildCodexHarvestFlow(ctx, h.cfg, h.codexTicketSettings, accounts, h.codexHarvest)
 	if h.openAIGatewayService != nil {
 		snapshot.Gateways = h.openAIGatewayService.CollectedAstraGateways()
+		snapshot.GatewayTurns = h.openAIGatewayService.CollectedAstraGatewayTurns()
 	}
 	response.Success(c, snapshot)
 }

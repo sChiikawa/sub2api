@@ -139,6 +139,40 @@ describe('HarvestFlowView nullable API lists', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('shows that rotation has not started until an account has a turn', async () => {
+    getFlow.mockResolvedValue(response())
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.get('[data-testid="gateway-turns"]').text()).toContain('admin.harvestFlow.gatewayTurnsEmpty')
+    } finally { wrapper.unmount() }
+  })
+
+  it('shows each account on its own gateway turn', async () => {
+    getFlow.mockResolvedValue({ ...response(),
+      accounts: [
+        { id: 7, name: 'alpha', status: 'active', schedulable: true, skip_harvest: false, in_scope: true, ready_count: 0, tickets: [] },
+        { id: 8, name: 'beta', status: 'active', schedulable: true, skip_harvest: false, in_scope: true, ready_count: 0, tickets: [] }
+      ],
+      gateway_turns: [
+        { account_id: 7, host: 'chat.gateway.unified-127.api.openai.com', until: '2099-01-01T00:04:00Z', remaining_seconds: 200, used_hosts: ['chat.gateway.unified-125.api.openai.com', 'chat.gateway.unified-127.api.openai.com'] },
+        { account_id: 8, host: 'chat.gateway.unified-125.api.openai.com', until: '2099-01-01T00:04:00Z', remaining_seconds: 240, used_hosts: ['chat.gateway.unified-125.api.openai.com'] }
+      ]
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      const turns = wrapper.get('[data-testid="gateway-turns"]')
+      expect(turns.text()).toContain('#7 alpha')
+      expect(turns.text()).toContain('chat.gateway.unified-127.api.openai.com')
+      expect(turns.text()).toContain('#8 beta')
+      expect(turns.text()).toContain('chat.gateway.unified-125.api.openai.com')
+      expect(turns.text()).toContain('admin.harvestFlow.gatewayTurnRemaining')
+      expect(turns.text()).toContain('admin.harvestFlow.gatewayTurnUsed')
+      expect(turns.text()).not.toContain('admin.harvestFlow.gatewayTurnsEmpty')
+    } finally { wrapper.unmount() }
+  })
+
   it('logs a business request that borrowed a candy-passed ticket', async () => {
     getFlow.mockResolvedValue({ ...response(),
       events: [

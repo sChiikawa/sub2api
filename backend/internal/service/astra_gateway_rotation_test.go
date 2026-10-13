@@ -33,12 +33,26 @@ func TestAccountGatewayRotationUsesEachHostFor240SecondsThenResets(t *testing.T)
 	require.Equal(t, "chat.gateway.unified-126.api.openai.com", second.Host)
 	third, _ := s.currentAccountGateway(account, "gpt-6-astra", now.Add(480*time.Second))
 	require.Equal(t, "chat.gateway.unified-127.api.openai.com", third.Host)
+	other := ticketTestAccount(8)
+	other.Name = "later"
+	independent, _ := s.currentAccountGateway(other, "gpt-5.6-sol", now.Add(500*time.Second))
+	require.Equal(t, first.Host, independent.Host)
+	turns := s.collectedAstraGatewayTurnsAt(now.Add(500 * time.Second))
+	require.Len(t, turns, 2)
+	require.Equal(t, int64(7), turns[0].AccountID)
+	require.Equal(t, "chat.gateway.unified-127.api.openai.com", turns[0].Host)
+	require.Equal(t, []string{
+		"chat.gateway.unified-125.api.openai.com",
+		"chat.gateway.unified-126.api.openai.com",
+		"chat.gateway.unified-127.api.openai.com",
+	}, turns[0].UsedHosts)
+	require.Equal(t, int64(8), turns[1].AccountID)
+	require.Equal(t, first.Host, turns[1].Host)
+	require.Equal(t, []string{first.Host}, turns[1].UsedHosts)
 	reset, switched := s.currentAccountGateway(account, "gpt-6-astra", now.Add(720*time.Second))
 	require.True(t, switched)
 	require.Equal(t, first.Host, reset.Host)
-	other := ticketTestAccount(8)
-	independent, _ := s.currentAccountGateway(other, "gpt-5.6-sol", now)
-	require.Equal(t, first.Host, independent.Host)
+	require.Empty(t, (&OpenAIGatewayService{}).CollectedAstraGatewayTurns())
 }
 
 func TestRotationDoesNotSkipGatewaysDiscoveredOutOfOrder(t *testing.T) {

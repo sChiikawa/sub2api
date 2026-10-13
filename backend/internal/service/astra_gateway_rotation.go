@@ -64,6 +64,68 @@ type AstraGatewayPoolEntry struct {
 	RemainingSeconds int       `json:"remaining_seconds"`
 }
 
+// AstraGatewayTurnView is one account's place in the shared gateway rotation.
+// An account appears only after one of its business requests has taken a turn.
+type AstraGatewayTurnView struct {
+	AccountID        int64     `json:"account_id"`
+	Host             string    `json:"host"`
+	Until            time.Time `json:"until"`
+	RemainingSeconds int       `json:"remaining_seconds"`
+	UsedHosts        []string  `json:"used_hosts"`
+}
+
+func (s *OpenAIGatewayService) CollectedAstraGatewayTurns() []AstraGatewayTurnView {
+	return s.collectedAstraGatewayTurnsAt(time.Now())
+}
+
+func (s *OpenAIGatewayService) collectedAstraGatewayTurnsAt(now time.Time) []AstraGatewayTurnView {
+	if s == nil {
+		return []AstraGatewayTurnView{}
+	}
+	s.ensureAstraGatewayStore()
+	s.astraGatewayMu.Lock()
+	defer s.astraGatewayMu.Unlock()
+	out := make([]AstraGatewayTurnView, 0, len(s.astraGatewayTurns))
+	for accountID, turn := range s.astraGatewayTurns {
+		if accountID <= 0 || turn == nil || turn.Host == "" {
+			continue
+		}
+		remaining := int(turn.Until.Sub(now).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+		used := make([]string, 0, len(turn.Used))
+		for host := range turn.Used {
+			if host != "" {
+				used = append(used, host)
+			}
+		}
+		slices.SortFunc(used, func(a, b string) int {
+			if an, bn := gatewayHostNumber(a), gatewayHostNumber(b); an != bn {
+				return an - bn
+			}
+			return strings.Compare(a, b)
+		})
+		out = append(out, AstraGatewayTurnView{
+			AccountID:        accountID,
+			Host:             turn.Host,
+			Until:            turn.Until,
+			RemainingSeconds: remaining,
+			UsedHosts:        used,
+		})
+	}
+	slices.SortFunc(out, func(a, b AstraGatewayTurnView) int {
+		if a.AccountID < b.AccountID {
+			return -1
+		}
+		if a.AccountID > b.AccountID {
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
 func (s *OpenAIGatewayService) CollectedAstraGateways() []AstraGatewayPoolEntry {
 	return s.collectedAstraGatewaysAt(time.Now())
 }
