@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
 	"slices"
@@ -27,6 +29,8 @@ const (
 	astraGatewayTurnDuration          = 240 * time.Second
 	astraGatewayCookieTTL             = time.Hour
 	astraGatewayCookiesPerAccountHost = 2
+	astraGatewayOverloadStreak        = 3
+	astraGatewayOverloadMessage       = "Our servers are currently overloaded. Please try again later."
 )
 
 type astraGatewaySlot struct {
@@ -40,10 +44,11 @@ type astraGatewaySlot struct {
 }
 
 type astraGatewayTurn struct {
-	Host      string
-	CookieKey string
-	Until     time.Time
-	Used      map[string]struct{}
+	Host           string
+	CookieKey      string
+	Until          time.Time
+	Used           map[string]struct{}
+	OverloadStreak int
 }
 
 var astraGatewayNumberRE = regexp.MustCompile(`^chat\.gateway\.unified-([0-9]+)\.api\.openai\.com$`)
@@ -412,6 +417,93 @@ func (s *OpenAIGatewayService) currentAccountGateway(account *Account, model str
 		Detail:      next.Host,
 	})
 	return cloneGatewaySlot(*next), true
+}
+
+// noteBusinessGatewayOverload counts consecutive HTTP 503 responses that carry
+// the upstream overload sentence. The third one ends this account's current
+// gateway turn. Any other response clears the count. The failed request is not
+// replayed; the next request uses the next gateway.
+func (s *OpenAIGatewayService) noteBusinessGatewayOverload(ctx context.Context, account *Account, model string, resp *http.Response) {
+	if s == nil || account == nil || !s.shouldRotateCodexOAuthGateway(ctx, account, model) {
+		return
+	}
+	matched := false
+	if resp != nil && resp.StatusCode == http.StatusServiceUnavailable {
+		matched = bytes.Contains(peekHTTPResponseBody(resp, 8192), []byte(astraGatewayOverloadMessage))
+	}
+	s.recordBusinessGatewayOverload(account, model, matched, time.Now())
+}
+
+func peekHTTPResponseBody(resp *http.Response, limit int64) []byte {
+	if resp == nil || resp.Body == nil || limit <= 0 {
+		return nil
+	}
+	buf := make([]byte, limit)
+	n, _ := resp.Body.Read(buf)
+	if n > 0 {
+		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf[:n]), resp.Body))
+	}
+	return buf[:n]
+}
+
+func (s *OpenAIGatewayService) recordBusinessGatewayOverload(account *Account, model string, matched bool, now time.Time) {
+	if s == nil || account == nil || account.ID <= 0 {
+		return
+	}
+	s.ensureAstraGatewayStore()
+	var removed []astraGatewaySlot
+	var turnSave *AstraGatewayPoolTurn
+	defer func() {
+		deleteAstraGatewaySlots(removed)
+		if turnSave != nil {
+			saveAstraGatewayTurn(*turnSave)
+		}
+	}()
+	s.astraGatewayMu.Lock()
+	defer s.astraGatewayMu.Unlock()
+	turn := s.astraGatewayTurns[account.ID]
+	if turn == nil || turn.Host == "" {
+		return
+	}
+	if !matched {
+		turn.OverloadStreak = 0
+		return
+	}
+	turn.OverloadStreak++
+	if turn.OverloadStreak < astraGatewayOverloadStreak {
+		return
+	}
+	removed = s.pruneGatewaySlotsLocked(now)
+	ordered := s.usableGatewaySlotsLocked(now)
+	if len(ordered) == 0 {
+		turn.OverloadStreak = 0
+		return
+	}
+	if turn.Used == nil {
+		turn.Used = map[string]struct{}{}
+	}
+	turn.Used[turn.Host] = struct{}{}
+	next := firstUnusedGateway(ordered, turn.Used)
+	if next == nil {
+		turn.Used = map[string]struct{}{}
+		next = &ordered[0]
+	}
+	turn.Host = next.Host
+	turn.CookieKey = astraGatewaySlotKey(next.Host, next.AccountID, next.Cookies)
+	turn.Until = now.Add(astraGatewayTurnDuration)
+	turn.Used[next.Host] = struct{}{}
+	turn.OverloadStreak = 0
+	turnSave = gatewayTurnRecord(account.ID, turn)
+	recordCodexHarvestFlow(CodexHarvestFlowEvent{
+		Stage:       "probe",
+		Kind:        "gateway_turn",
+		AccountID:   account.ID,
+		AccountName: account.Name,
+		Model:       model,
+		Node:        next.Host,
+		Result:      "gateway_turn",
+		Detail:      "overload",
+	})
 }
 
 func (s *OpenAIGatewayService) pruneGatewaySlotsLocked(now time.Time) []astraGatewaySlot {

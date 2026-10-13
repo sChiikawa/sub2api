@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -402,4 +403,48 @@ func TestGatewayCredentialExpiryRetiresCookieInsideTheHour(t *testing.T) {
 	require.Len(t, list, 1)
 	require.Equal(t, "chat.gateway.unified-126.api.openai.com", list[0].Host)
 	require.Equal(t, "active", list[0].Status)
+}
+
+func TestThreeOverload503sSwitchToTheNextGateway(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
+	account := ticketTestAccount(7)
+	other := ticketTestAccount(8)
+	now := time.Now()
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-1"))
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-2"))
+	first, switched := s.currentAccountGateway(account, "gpt-5.4", now)
+	require.True(t, switched)
+	require.Equal(t, "chat.gateway.unified-1.api.openai.com", first.Host)
+	_, _ = s.currentAccountGateway(other, "gpt-5.4", now)
+
+	overload := func(message string) *http.Response {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"` + message + `"}}`))}
+	}
+	ctx := context.Background()
+	s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", overload("Our servers are currently overloaded. Please try again later."))
+	s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", overload("Our servers are currently overloaded. Please try again later."))
+	held, switched := s.currentAccountGateway(account, "gpt-5.4", now.Add(time.Second))
+	require.False(t, switched)
+	require.Equal(t, first.Host, held.Host)
+
+	s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))})
+	s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", overload("something else"))
+	for range 2 {
+		s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", overload("Our servers are currently overloaded. Please try again later."))
+	}
+	still, switched := s.currentAccountGateway(account, "gpt-5.4", now.Add(2*time.Second))
+	require.False(t, switched)
+	require.Equal(t, first.Host, still.Host)
+
+	third := overload("Our servers are currently overloaded. Please try again later.")
+	s.noteBusinessGatewayOverload(ctx, account, "gpt-5.4", third)
+	raw, err := io.ReadAll(third.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "Our servers are currently overloaded. Please try again later.")
+	moved, switched := s.currentAccountGateway(account, "gpt-5.4", now.Add(3*time.Second))
+	require.False(t, switched)
+	require.Equal(t, "chat.gateway.unified-2.api.openai.com", moved.Host)
+	untouched, switched := s.currentAccountGateway(other, "gpt-5.4", now.Add(3*time.Second))
+	require.False(t, switched)
+	require.Equal(t, first.Host, untouched.Host)
 }

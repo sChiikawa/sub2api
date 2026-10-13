@@ -45,6 +45,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		if result != nil {
 			s.noteBusinessGatewayCookie(account, openAIRequestModel(request), result)
 		}
+		s.noteBusinessGatewayOverload(request.Context(), account, openAIRequestModel(request), result)
 		if resultErr == nil {
 			// Fast admission may have installed the ticket inside the upstream
 			// adapter. Capture the binding before observation can revoke it.
