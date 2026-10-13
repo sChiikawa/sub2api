@@ -104,7 +104,10 @@
               <span>{{ localText('网关轮转后用 Beta 糖果题检查当前网关', 'Check the current gateway with a Beta candy question after rotation') }}</span>
               <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">Beta</span>
             </label>
-            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。业务请求成功结束后，用刚才那个网关再答一题糖果。答案不对或请求报错时，这个账号跳过当前网关。额外消耗上游额度，不重放刚才的业务请求。', 'Off by default. After a successful business request, ask one candy question through the gateway just used. A wrong answer or request error skips that gateway for this account. This uses extra upstream quota and does not replay the business request.') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。业务请求成功结束后，用 gpt-6.1-sol 或 gpt-6-astra 对刚才那个网关答一题糖果。同一个账号在同一轮里，每个网关只测一次；这一轮网关全部用完并重新开始后，再各测一次。答案不对或请求报错时跳过该网关。通过后，在这个网关过期前优先调度该账号，并把并发调成下面的数量；网关过期后恢复原来的并发和调度。额外消耗上游额度，不重放刚才的业务请求。', 'Off by default. After a successful business request, ask one candy question on gpt-6.1-sol or gpt-6-astra through the gateway just used. Each account is tested once per gateway in a round, and tested again after every gateway has been used and the round starts over. A wrong answer or request error skips that gateway. A pass schedules the account first, at the concurrency below, until the gateway expires, then the original concurrency and scheduling return. This uses extra upstream quota and does not replay the business request.') }}</p>
+            <label class="mt-3 flex items-center gap-2 text-sm" for="codex-gateway-candy-concurrency">{{ localText('通过后账号并发', 'Account concurrency after a pass') }}
+              <input id="codex-gateway-candy-concurrency" v-model.number="form.openai_codex_gateway_candy_concurrency" type="number" min="1" max="32" class="input w-24" />
+            </label>
           </div>
           <label class="mt-3 flex items-center gap-2 text-sm"><input id="codex-ticket-strict" type="checkbox" v-model="form.openai_codex_ticket_strict_response" />{{ localText('严格拦截票据响应不匹配（默认关闭）', 'Reject mismatched ticket responses (off by default)') }}</label>
           <p class="mt-1 text-xs text-gray-500">{{ localText('仅在 HTTP 响应头明确不匹配时拦截正文；当前请求可能已计费，不会自动重放。关闭时只更新后续票据调度。', 'Rejects the body when HTTP response state headers mismatch. The upstream may have charged; the request is not replayed. When off, only future ticket scheduling changes.') }}</p>
@@ -145,6 +148,7 @@ function policyOf(settings: SystemSettings) {
     openai_codex_ticket_strategy: settings.openai_codex_ticket_strategy || 'standby',
     openai_codex_ticket_candy_observation: settings.openai_codex_ticket_candy_observation ?? false,
     openai_codex_gateway_candy_check: settings.openai_codex_gateway_candy_check ?? false,
+    openai_codex_gateway_candy_concurrency: settings.openai_codex_gateway_candy_concurrency || 3,
     openai_codex_ticket_strict_response: settings.openai_codex_ticket_strict_response ?? false,
     openai_codex_ticket_harvest_scope: {
       mode: scope?.mode || 'all', group_ids: [...(scope?.group_ids ?? [])],

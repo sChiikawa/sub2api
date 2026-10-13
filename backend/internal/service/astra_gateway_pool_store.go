@@ -71,7 +71,7 @@ func (s *OpenAIGatewayService) ensureAstraGatewayStore() {
 	}
 	s.astraGatewayLoaded = true
 	s.astraGatewayMu.Unlock()
-	slots, turns := loadAstraGatewayPool()
+	slots, turns, passes := loadAstraGatewayPool()
 	s.astraGatewayMu.Lock()
 	defer s.astraGatewayMu.Unlock()
 	if s.astraGatewaySlots == nil {
@@ -103,12 +103,37 @@ func (s *OpenAIGatewayService) ensureAstraGatewayStore() {
 		}
 		s.astraGatewayTurns[item.AccountID] = &astraGatewayTurn{Host: item.Host, CookieKey: item.CookieKey, Until: item.Until, Used: used}
 	}
+	if s.astraGatewayCandyPass == nil {
+		s.astraGatewayCandyPass = map[int64]map[string]astraGatewayCandyAccountPass{}
+	}
+	for _, pass := range passes {
+		if pass.AccountID <= 0 || pass.Host == "" || pass.Expires.IsZero() {
+			continue
+		}
+		if s.astraGatewayCandyPass[pass.AccountID] == nil {
+			s.astraGatewayCandyPass[pass.AccountID] = map[string]astraGatewayCandyAccountPass{}
+		}
+		s.astraGatewayCandyPass[pass.AccountID][pass.Host] = astraGatewayCandyAccountPass{Host: pass.Host, Expires: pass.Expires, Passed: pass.Passed}
+	}
 }
 
-func loadAstraGatewayPool() ([]AstraGatewayPoolSlot, []AstraGatewayPoolTurn) {
+type AstraGatewayCandyAccountRecord struct {
+	AccountID int64
+	Host      string
+	Expires   time.Time
+	Passed    bool
+}
+
+type astraGatewayCandyPassStore interface {
+	ListCandyPasses(context.Context) ([]AstraGatewayCandyAccountRecord, error)
+	SaveCandyPass(context.Context, int64, string, time.Time, bool) error
+	DeleteCandyPass(context.Context, int64, string) error
+}
+
+func loadAstraGatewayPool() ([]AstraGatewayPoolSlot, []AstraGatewayPoolTurn, []AstraGatewayCandyAccountRecord) {
 	repo := astraGatewayPoolStore()
 	if repo == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -122,7 +147,41 @@ func loadAstraGatewayPool() ([]AstraGatewayPoolSlot, []AstraGatewayPoolTurn) {
 		logger.L().Warn("astra gateway turn load failed", zap.Error(err))
 		turns = nil
 	}
-	return slots, turns
+	var passes []AstraGatewayCandyAccountRecord
+	if candy, ok := repo.(astraGatewayCandyPassStore); ok {
+		passes, err = candy.ListCandyPasses(ctx)
+		if err != nil {
+			logger.L().Warn("astra gateway candy pass load failed", zap.Error(err))
+			passes = nil
+		}
+	}
+	return slots, turns, passes
+}
+
+func saveAstraGatewayCandyPass(accountID int64, host string, expires time.Time, passed bool) {
+	repo := astraGatewayPoolStore()
+	candy, ok := repo.(astraGatewayCandyPassStore)
+	if !ok || accountID <= 0 || host == "" || expires.IsZero() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := candy.SaveCandyPass(ctx, accountID, host, expires, passed); err != nil {
+		logger.L().Warn("astra gateway candy pass save failed", zap.Error(err))
+	}
+}
+
+func deleteAstraGatewayCandyPass(accountID int64, host string) {
+	repo := astraGatewayPoolStore()
+	candy, ok := repo.(astraGatewayCandyPassStore)
+	if !ok || accountID <= 0 || host == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := candy.DeleteCandyPass(ctx, accountID, host); err != nil {
+		logger.L().Warn("astra gateway candy pass delete failed", zap.Error(err))
+	}
 }
 
 func saveAstraGatewaySlot(slot astraGatewaySlot) {

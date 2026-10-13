@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,13 +84,27 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 // observeGatewayRotationCandy asks the gateway just used by a business request
 // one Beta candy question. A wrong answer or any request error skips that
 // gateway for this account. The business response is never delayed or replayed.
-func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, headers http.Header, account *Account, model, host, cookie string) {
+func gatewayCandyTestModel(models []string) string {
+	allowed := map[string]struct{}{}
+	for _, model := range models {
+		allowed[normalizeOpenAICodexTicketModel(model)] = struct{}{}
+	}
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+		if _, ok := allowed[model]; ok {
+			return model
+		}
+	}
+	return "gpt-6-astra"
+}
+
+func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, headers http.Header, account *Account, host, cookie string) {
 	if s == nil || s.settingService == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || !s.settingService.CodexGatewayCandyCheck(ctx) {
 		return
 	}
-	if model == "" {
-		model = OpenAICodexStateProbeDefaultModel
+	if s.gatewayCandyAlreadyTested(account.ID, host) {
+		return
 	}
+	model := gatewayCandyTestModel(s.openAICodexTicketConfig().Models)
 	key := strconv.FormatInt(account.ID, 10) + "\x00" + host
 	s.astraCandyMu.Lock()
 	if s.gatewayCandyRunning >= 2 {
@@ -123,8 +138,47 @@ func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, 
 			kind = "candy_pass"
 		}
 		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: model, Node: host, Reason: reason, Result: reason, Detail: reason})
+		if reason == "candy_disabled" || reason == "candy_unavailable" || reason == "candy_stale" || reason == "candy_busy" {
+			return
+		}
+		expires := s.gatewayCookieExpires(host, cookie)
+		passed := reason == "candy_passed"
+		s.markGatewayCandyTestedThisRound(id, host)
+		s.noteGatewayCandyTested(id, host, expires, passed)
+		if passed {
+			return
+		}
 		s.skipAccountGateway(&Account{ID: id, Name: name}, model, reason)
 	}()
+}
+
+func (s *OpenAIGatewayService) gatewayCookieExpires(host, cookie string) time.Time {
+	if s == nil || host == "" {
+		return time.Time{}
+	}
+	want := strings.Split(strings.TrimSpace(cookie), "; ")
+	s.astraGatewayMu.Lock()
+	defer s.astraGatewayMu.Unlock()
+	var exact, hostExpires time.Time
+	now := time.Now()
+	for _, slot := range s.astraGatewaySlots {
+		if slot.Host != host || !gatewaySlotActive(slot, now) {
+			continue
+		}
+		if hostExpires.IsZero() || slot.ExpiresAt.After(hostExpires) {
+			hostExpires = slot.ExpiresAt
+		}
+		if slices.Equal(slot.Cookies, want) && (exact.IsZero() || slot.ExpiresAt.After(exact)) {
+			exact = slot.ExpiresAt
+		}
+	}
+	if !exact.IsZero() {
+		return exact
+	}
+	if !hostExpires.IsZero() {
+		return hostExpires
+	}
+	return now.Add(astraGatewayCookieTTL)
 }
 
 func (s *OpenAIGatewayService) runGatewayCandy(ctx context.Context, headers http.Header, id int64, model, cookie string) string {

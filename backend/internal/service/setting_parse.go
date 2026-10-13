@@ -986,6 +986,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAICodexTicketStrictResponse = settings[SettingKeyOpenAICodexTicketStrict] == "true"
 	result.OpenAICodexTicketCandyObservation = settings[SettingKeyOpenAICodexTicketCandyObservation] == "true"
 	result.OpenAICodexGatewayCandyCheck = settings[SettingKeyOpenAICodexGatewayCandyCheck] == "true"
+	result.OpenAICodexGatewayCandyConcurrency = defaultGatewayCandyConcurrency
+	if raw := strings.TrimSpace(settings[SettingKeyOpenAICodexGatewayCandyConcurrency]); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			result.OpenAICodexGatewayCandyConcurrency = NormalizeGatewayCandyConcurrency(parsed)
+		}
+	}
 	result.OpenAICodexTicketStaticProxyURL = strings.TrimSpace(settings[SettingKeyOpenAICodexTicketStaticProxyURL])
 	if raw, ok := settings[SettingKeyOpenAICodexTicketModels]; ok && strings.TrimSpace(raw) != "" {
 		var models []string

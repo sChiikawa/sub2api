@@ -517,6 +517,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexGatewayCandyCheck != after.OpenAICodexGatewayCandyCheck {
 		changed = append(changed, "openai_codex_gateway_candy_check")
 	}
+	if before.OpenAICodexGatewayCandyConcurrency != after.OpenAICodexGatewayCandyConcurrency {
+		changed = append(changed, "openai_codex_gateway_candy_concurrency")
+	}
 	if before.OpenAICodexTicketFailClosed != after.OpenAICodexTicketFailClosed {
 		changed = append(changed, "openai_codex_ticket_fail_closed")
 	}

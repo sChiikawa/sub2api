@@ -46,7 +46,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			releaseChat()
 			if observe {
 				s.observeScheduledAstraCandy(request.Context(), observationHeaders, account, observationTicket)
-				s.observeGatewayRotationCandy(request.Context(), candyHeaders, account, gatewayModel, gatewayHost, gatewayCookie)
+				s.observeGatewayRotationCandy(request.Context(), candyHeaders, account, gatewayHost, gatewayCookie)
 			}
 		})
 	}()

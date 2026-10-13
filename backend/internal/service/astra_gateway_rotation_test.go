@@ -405,6 +405,43 @@ func TestGatewayCredentialExpiryRetiresCookieInsideTheHour(t *testing.T) {
 	require.Equal(t, "active", list[0].Status)
 }
 
+func TestCandyPassedAccountIsPreferredUntilTheGatewayExpires(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	now := time.Now()
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-1"))
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-9"))
+	account := ticketTestAccount(7)
+	account.Concurrency = 1
+	other := ticketTestAccount(8)
+	first, _ := s.currentAccountGateway(account, "gpt-5.4", now)
+	require.Equal(t, "chat.gateway.unified-1.api.openai.com", first.Host)
+	s.noteGatewayCandyTested(account.ID, first.Host, now.Add(30*time.Minute), true)
+	s.markGatewayCandyTestedThisRound(account.ID, first.Host)
+	require.True(t, s.gatewayCandyAlreadyTested(account.ID, first.Host))
+	require.False(t, s.gatewayCandyAlreadyTested(account.ID, "chat.gateway.unified-9.api.openai.com"))
+	require.Equal(t, "gpt-6.1-sol", gatewayCandyTestModel([]string{"gpt-6-astra", "gpt-6.1-sol"}))
+	require.Equal(t, "gpt-6-astra", gatewayCandyTestModel([]string{"gpt-5.4", "gpt-6-astra"}))
+	concurrency, ok := s.candyPassedAccountSchedule(account.ID, now.Add(time.Minute))
+	require.True(t, ok)
+	require.Equal(t, 3, concurrency)
+	_, ok = s.candyPassedAccountSchedule(other.ID, now.Add(time.Minute))
+	require.False(t, ok)
+	_, ok = s.candyPassedAccountSchedule(account.ID, now.Add(31*time.Minute))
+	require.False(t, ok)
+	order := preferCandyPassedAccounts([]openAIAccountCandidateScore{
+		{account: other},
+		{account: account, candyPreferred: true},
+	})
+	require.Equal(t, account.ID, order[0].account.ID)
+	require.Equal(t, other.ID, order[1].account.ID)
+	s.astraGatewayMu.Lock()
+	resetGatewayRoundLocked(s.astraGatewayTurns[account.ID])
+	s.astraGatewayMu.Unlock()
+	require.False(t, s.gatewayCandyAlreadyTested(account.ID, first.Host))
+	_, ok = s.candyPassedAccountSchedule(account.ID, now.Add(time.Minute))
+	require.True(t, ok)
+}
+
 func TestGatewayCandyFailureSkipsOnlyTheCurrentAccount(t *testing.T) {
 	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, Models: []string{"gpt-6-astra"}}, nil)
 	account := ticketTestAccount(7)

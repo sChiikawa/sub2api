@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -107,6 +108,44 @@ cookie_key = EXCLUDED.cookie_key,
 until_at = EXCLUDED.until_at,
 used_hosts = EXCLUDED.used_hosts`,
 		turn.AccountID, turn.Host, turn.CookieKey, turn.Until, strings.Join(turn.UsedHosts, "\n"))
+	return err
+}
+
+func (r *astraGatewayPoolRepository) ListCandyPasses(ctx context.Context) ([]service.AstraGatewayCandyAccountRecord, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("gateway pool repository unavailable")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT account_id, host, expires_at, passed FROM astra_gateway_candy_pass`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []service.AstraGatewayCandyAccountRecord
+	for rows.Next() {
+		var pass service.AstraGatewayCandyAccountRecord
+		if err := rows.Scan(&pass.AccountID, &pass.Host, &pass.Expires, &pass.Passed); err != nil {
+			return nil, err
+		}
+		out = append(out, pass)
+	}
+	return out, rows.Err()
+}
+
+func (r *astraGatewayPoolRepository) SaveCandyPass(ctx context.Context, accountID int64, host string, expires time.Time, passed bool) error {
+	if r == nil || r.db == nil {
+		return errors.New("gateway pool repository unavailable")
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT INTO astra_gateway_candy_pass (account_id, host, expires_at, passed)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (account_id, host) DO UPDATE SET expires_at = EXCLUDED.expires_at, passed = EXCLUDED.passed`, accountID, host, expires, passed)
+	return err
+}
+
+func (r *astraGatewayPoolRepository) DeleteCandyPass(ctx context.Context, accountID int64, host string) error {
+	if r == nil || r.db == nil {
+		return errors.New("gateway pool repository unavailable")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM astra_gateway_candy_pass WHERE account_id = $1 AND host = $2`, accountID, host)
 	return err
 }
 

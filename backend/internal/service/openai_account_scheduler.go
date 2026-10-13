@@ -639,7 +639,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, s.candyScheduleConcurrency(account))
 	if acquireErr != nil && req.DisableStickyEscape {
 		return nil, false, acquireErr
 	}
@@ -672,13 +672,25 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
 				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
+				MaxConcurrency: s.candyScheduleConcurrency(account),
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
 		}), false, nil
 	}
 	return nil, false, nil
+}
+
+func (s *defaultOpenAIAccountScheduler) candyScheduleConcurrency(account *Account) int {
+	if account == nil {
+		return 0
+	}
+	if s != nil && s.service != nil {
+		if concurrency, ok := s.service.candyPassedAccountSchedule(account.ID, time.Now()); ok && concurrency > 0 {
+			return concurrency
+		}
+	}
+	return account.Concurrency
 }
 
 func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
@@ -737,6 +749,7 @@ type openAIAccountCandidateScore struct {
 	loadKnown             bool
 	score                 float64
 	priority              int
+	candyPreferred        bool
 	errorRate             float64
 	ttft                  float64
 	hasTTFT               bool
@@ -954,13 +967,24 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		if s.stats != nil {
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
 		}
+		scheduledAccount := account
+		candyPreferred := false
+		if s.service != nil {
+			if concurrency, ok := s.service.candyPassedAccountSchedule(account.ID, time.Now()); ok {
+				cloned := *account
+				cloned.Concurrency = concurrency
+				scheduledAccount = &cloned
+				candyPreferred = true
+			}
+		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
-			account:   account,
-			loadInfo:  loadInfo,
-			loadKnown: loadKnown,
-			errorRate: errorRate,
-			ttft:      ttft,
-			hasTTFT:   hasTTFT,
+			account:        scheduledAccount,
+			loadInfo:       loadInfo,
+			loadKnown:      loadKnown,
+			errorRate:      errorRate,
+			ttft:           ttft,
+			hasTTFT:        hasTTFT,
+			candyPreferred: candyPreferred,
 		})
 		if rpm, ok := accountRPMStateFromContext(ctx, account); ok && account.IsOpenAIOAuth() {
 			candidate := &allCandidates[len(allCandidates)-1]
@@ -1271,10 +1295,29 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
-		return selectionOrder
+		return preferCandyPassedAccounts(selectionOrder)
 	}
 
-	return buildBPSPreferredOrder(plan.candidates)
+	return preferCandyPassedAccounts(buildBPSPreferredOrder(plan.candidates))
+}
+
+func preferCandyPassedAccounts(order []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	if len(order) < 2 {
+		return order
+	}
+	preferred := make([]openAIAccountCandidateScore, 0, len(order))
+	rest := make([]openAIAccountCandidateScore, 0, len(order))
+	for _, item := range order {
+		if item.candyPreferred {
+			preferred = append(preferred, item)
+		} else {
+			rest = append(rest, item)
+		}
+	}
+	if len(preferred) == 0 {
+		return order
+	}
+	return append(preferred, rest...)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1334,12 +1377,13 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if candidate.account == nil {
 			continue
 		}
-		if candidate.loadKnown && candidate.account.Concurrency > 0 &&
-			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
+		scheduleConcurrency := s.candyScheduleConcurrency(candidate.account)
+		if candidate.loadKnown && scheduleConcurrency > 0 &&
+			candidate.loadInfo.CurrentConcurrency >= scheduleConcurrency {
 			continue
 		}
 
-		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidate.account.Concurrency, budget)
+		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, scheduleConcurrency, budget)
 		if !attempted {
 			break
 		}
@@ -1480,7 +1524,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, s.candyScheduleConcurrency(account))
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
@@ -1501,7 +1545,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Account: account,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
+					MaxConcurrency: s.candyScheduleConcurrency(account),
 					Timeout:        cfg.StickySessionWaitTimeout,
 					MaxWaiting:     cfg.StickySessionMaxWaiting,
 				},

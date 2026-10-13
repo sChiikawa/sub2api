@@ -559,6 +559,7 @@ type OpenAIGatewayService struct {
 	astraGatewayMu                 sync.Mutex
 	astraGatewaySlots              map[string]astraGatewaySlot
 	astraGatewayTurns              map[int64]*astraGatewayTurn
+	astraGatewayCandyPass          map[int64]map[string]astraGatewayCandyAccountPass
 	astraGatewaySeeded             bool
 	astraGatewayLoaded             bool
 	openaiCodexTickets             sync.Map
