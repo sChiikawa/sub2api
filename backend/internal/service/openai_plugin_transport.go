@@ -102,13 +102,17 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 		if err := gateway.applyOpenAICodexTicket(request.Context(), account, model, request.Header, "sse"); err != nil {
 			return nil, err
 		}
-		// This restores the complete cookie/egress bundle, holds it until body close,
-		// observes replacements and enforces the configured strict response policy.
-		request = request.WithContext(context.WithValue(request.Context(), astraCandySkipObservationKey{}, true))
-		return gateway.doOpenAIUpstream(request, proxyURL, account)
-	}
-	if gateway != nil && gateway.shouldRotateCodexOAuthGateway(request.Context(), account, model) {
-		gateway.overlayAccountGatewayCookie(request, account)
+		// Rotation may have written a pool cookie before discovering that this
+		// stored ticket is not usable. Account tests only keep that cookie when
+		// the ticket itself is attached.
+		if request.Header.Get(openAICodexTurnStateHeader) == "" {
+			request.Header.Del("Cookie")
+		} else {
+			// This restores the complete cookie/egress bundle, holds it until body close,
+			// observes replacements and enforces the configured strict response policy.
+			request = request.WithContext(context.WithValue(request.Context(), astraCandySkipObservationKey{}, true))
+			return gateway.doOpenAIUpstream(request, proxyURL, account)
+		}
 	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)

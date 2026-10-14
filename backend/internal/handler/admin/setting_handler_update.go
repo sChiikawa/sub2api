@@ -24,17 +24,17 @@ import (
 
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
-	ExcelBPSEnabled                   *bool                            `json:"excel_bps_enabled"`
-	OpenAICodexTicketHarvestScope     *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
-	OpenAICodexTicketStrictResponse   *bool                            `json:"openai_codex_ticket_strict_response"`
-	OpenAICodexTicketCandyObservation *bool                            `json:"openai_codex_ticket_candy_observation"`
-	OpenAICodexGatewayCandyCheck      *bool                            `json:"openai_codex_gateway_candy_check"`
+	ExcelBPSEnabled                    *bool                            `json:"excel_bps_enabled"`
+	OpenAICodexTicketHarvestScope      *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
+	OpenAICodexTicketStrictResponse    *bool                            `json:"openai_codex_ticket_strict_response"`
+	OpenAICodexTicketCandyObservation  *bool                            `json:"openai_codex_ticket_candy_observation"`
+	OpenAICodexGatewayCandyCheck       *bool                            `json:"openai_codex_gateway_candy_check"`
 	OpenAICodexGatewayCandyConcurrency *int                             `json:"openai_codex_gateway_candy_concurrency"`
-	OpenAICodexTicketFailClosed       *bool                            `json:"openai_codex_ticket_fail_closed"`
-	OpenAICodexTicketStrategy         *string                          `json:"openai_codex_ticket_strategy"`
-	PrismBrowserEnabled               bool                             `json:"prism_browser_enabled"`
-	PrismBrowserBaseURL               string                           `json:"prism_browser_base_url"`
-	PrismBrowserAPIKey                string                           `json:"prism_browser_api_key"`
+	OpenAICodexTicketFailClosed        *bool                            `json:"openai_codex_ticket_fail_closed"`
+	OpenAICodexTicketStrategy          *string                          `json:"openai_codex_ticket_strategy"`
+	PrismBrowserEnabled                bool                             `json:"prism_browser_enabled"`
+	PrismBrowserBaseURL                string                           `json:"prism_browser_base_url"`
+	PrismBrowserAPIKey                 string                           `json:"prism_browser_api_key"`
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
@@ -2722,7 +2722,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexTicketStrictResponse:                        updatedSettings.OpenAICodexTicketStrictResponse,
 		OpenAICodexTicketCandyObservation:                      updatedSettings.OpenAICodexTicketCandyObservation,
 		OpenAICodexGatewayCandyCheck:                           updatedSettings.OpenAICodexGatewayCandyCheck,
-		OpenAICodexGatewayCandyConcurrency:                    updatedSettings.OpenAICodexGatewayCandyConcurrency,
+		OpenAICodexGatewayCandyConcurrency:                     updatedSettings.OpenAICodexGatewayCandyConcurrency,
 		OpenAICodexTicketFailClosed:                            updatedSettings.OpenAICodexTicketFailClosed,
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		OpenAICodexTicketModels:                                updatedSettings.OpenAICodexTicketModels,

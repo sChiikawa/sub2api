@@ -837,15 +837,6 @@ func (s *OpenAIGatewayService) candyPassedAccountSchedule(accountID int64, now t
 	return s.gatewayCandyConcurrency(context.Background()), true
 }
 
-func (s *OpenAIGatewayService) gatewayHostActiveLocked(host string, now time.Time) bool {
-	for _, slot := range s.astraGatewaySlots {
-		if slot.Host == host && gatewaySlotActive(slot, now) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *OpenAIGatewayService) rotateAccountGatewayLocked(account *Account, turn *astraGatewayTurn, model, reason string, now time.Time) ([]astraGatewaySlot, *AstraGatewayPoolTurn, bool) {
 	removed := s.pruneGatewaySlotsLocked(now)
 	if turn == nil {

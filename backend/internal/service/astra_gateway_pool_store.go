@@ -173,19 +173,6 @@ func saveAstraGatewayCandyPass(accountID int64, host string, expires time.Time, 
 	}
 }
 
-func deleteAstraGatewayCandyPass(accountID int64, host string) {
-	repo := astraGatewayPoolStore()
-	candy, ok := repo.(astraGatewayCandyPassStore)
-	if !ok || accountID <= 0 || host == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-	if err := candy.DeleteCandyPass(ctx, accountID, host); err != nil {
-		logger.L().Warn("astra gateway candy pass delete failed", zap.Error(err))
-	}
-}
-
 func saveAstraGatewaySlot(slot astraGatewaySlot) {
 	repo := astraGatewayPoolStore()
 	if repo == nil || slot.Host == "" {
