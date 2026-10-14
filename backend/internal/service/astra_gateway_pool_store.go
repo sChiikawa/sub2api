@@ -38,6 +38,7 @@ type AstraGatewayPoolRepository interface {
 	DeleteSlot(context.Context, AstraGatewayPoolSlot) error
 	ListTurns(context.Context) ([]AstraGatewayPoolTurn, error)
 	SaveTurn(context.Context, AstraGatewayPoolTurn) error
+	DeleteTurn(context.Context, int64) error
 }
 
 var astraGatewayPool atomic.Pointer[AstraGatewayPoolRepository]
@@ -128,6 +129,7 @@ type astraGatewayCandyPassStore interface {
 	ListCandyPasses(context.Context) ([]AstraGatewayCandyAccountRecord, error)
 	SaveCandyPass(context.Context, int64, string, time.Time, bool) error
 	DeleteCandyPass(context.Context, int64, string) error
+	DeleteAccountCandyPasses(context.Context, int64) error
 }
 
 func loadAstraGatewayPool() ([]AstraGatewayPoolSlot, []AstraGatewayPoolTurn, []AstraGatewayCandyAccountRecord) {
@@ -212,6 +214,31 @@ func deleteAstraGatewaySlots(slots []astraGatewaySlot) {
 		if err := repo.DeleteSlot(ctx, AstraGatewayPoolSlot{Host: slot.Host, AccountID: slot.AccountID, Cookies: slot.Cookies}); err != nil {
 			logger.L().Warn("astra gateway pool delete failed", zap.Error(err))
 		}
+	}
+}
+
+func deleteAstraGatewayTurn(accountID int64) {
+	repo := astraGatewayPoolStore()
+	if repo == nil || accountID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := repo.DeleteTurn(ctx, accountID); err != nil {
+		logger.L().Warn("astra gateway turn delete failed", zap.Int64("account_id", accountID), zap.Error(err))
+	}
+}
+
+func deleteAstraGatewayAccountCandyPasses(accountID int64) {
+	repo := astraGatewayPoolStore()
+	candy, ok := repo.(astraGatewayCandyPassStore)
+	if !ok || accountID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := candy.DeleteAccountCandyPasses(ctx, accountID); err != nil {
+		logger.L().Warn("astra gateway candy pass delete failed", zap.Int64("account_id", accountID), zap.Error(err))
 	}
 }
 

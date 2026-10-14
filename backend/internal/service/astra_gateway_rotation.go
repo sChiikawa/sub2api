@@ -96,7 +96,27 @@ func (s *OpenAIGatewayService) collectedAstraGatewayTurnsAt(now time.Time) []Ast
 	}
 	s.ensureAstraGatewayStore()
 	s.astraGatewayMu.Lock()
-	defer s.astraGatewayMu.Unlock()
+	out := s.gatewayTurnViewsLocked(now)
+	s.astraGatewayMu.Unlock()
+	missing := s.missingGatewayTurnAccounts(gatewayTurnAccountIDs(out))
+	if len(missing) == 0 {
+		return out
+	}
+	s.dropGatewayTurns(missing)
+	gone := make(map[int64]struct{}, len(missing))
+	for _, id := range missing {
+		gone[id] = struct{}{}
+	}
+	kept := out[:0]
+	for _, turn := range out {
+		if _, ok := gone[turn.AccountID]; !ok {
+			kept = append(kept, turn)
+		}
+	}
+	return kept
+}
+
+func (s *OpenAIGatewayService) gatewayTurnViewsLocked(now time.Time) []AstraGatewayTurnView {
 	out := make([]AstraGatewayTurnView, 0, len(s.astraGatewayTurns))
 	for accountID, turn := range s.astraGatewayTurns {
 		if accountID <= 0 || turn == nil || turn.Host == "" {
@@ -136,6 +156,55 @@ func (s *OpenAIGatewayService) collectedAstraGatewayTurnsAt(now time.Time) []Ast
 		return 0
 	})
 	return out
+}
+
+func gatewayTurnAccountIDs(turns []AstraGatewayTurnView) []int64 {
+	ids := make([]int64, 0, len(turns))
+	for _, turn := range turns {
+		ids = append(ids, turn.AccountID)
+	}
+	return ids
+}
+
+func (s *OpenAIGatewayService) missingGatewayTurnAccounts(ids []int64) []int64 {
+	if s == nil || s.accountRepo == nil || len(ids) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	found, err := s.accountRepo.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	exists := make(map[int64]struct{}, len(found))
+	for _, account := range found {
+		if account != nil && account.ID > 0 {
+			exists[account.ID] = struct{}{}
+		}
+	}
+	missing := make([]int64, 0)
+	for _, id := range ids {
+		if _, ok := exists[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
+func (s *OpenAIGatewayService) dropGatewayTurns(accountIDs []int64) {
+	if s == nil || len(accountIDs) == 0 {
+		return
+	}
+	s.astraGatewayMu.Lock()
+	for _, id := range accountIDs {
+		delete(s.astraGatewayTurns, id)
+		delete(s.astraGatewayCandyPass, id)
+	}
+	s.astraGatewayMu.Unlock()
+	for _, id := range accountIDs {
+		deleteAstraGatewayTurn(id)
+		deleteAstraGatewayAccountCandyPasses(id)
+	}
 }
 
 func (s *OpenAIGatewayService) CollectedAstraGateways() []AstraGatewayPoolEntry {

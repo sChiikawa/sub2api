@@ -196,6 +196,51 @@ func (m *memoryGatewayPool) DeleteSlot(_ context.Context, slot AstraGatewayPoolS
 func (m *memoryGatewayPool) ListTurns(context.Context) ([]AstraGatewayPoolTurn, error) {
 	return append([]AstraGatewayPoolTurn(nil), m.turns...), nil
 }
+func TestDeletedAccountDisappearsFromGatewayTurns(t *testing.T) {
+	s := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	store := &memoryGatewayPool{}
+	BindAstraGatewayPoolRepository(store)
+	t.Cleanup(func() { BindAstraGatewayPoolRepository(nil) })
+	now := time.Now()
+	s.rememberGatewayCookie(mint780Pair(now.Add(time.Hour), "unified-1"))
+	kept := ticketTestAccount(7)
+	gone := ticketTestAccount(8)
+	s.currentAccountGateway(kept, "gpt-6-astra", now)
+	s.currentAccountGateway(gone, "gpt-6-astra", now)
+	s.accountRepo = &turnAccountRepo{live: map[int64]bool{kept.ID: true}}
+	turns := s.CollectedAstraGatewayTurns()
+	require.Len(t, turns, 1)
+	require.Equal(t, kept.ID, turns[0].AccountID)
+	require.Len(t, store.turns, 1)
+	require.Equal(t, kept.ID, store.turns[0].AccountID)
+}
+
+type turnAccountRepo struct {
+	AccountRepository
+	live map[int64]bool
+}
+
+func (r *turnAccountRepo) GetByIDs(_ context.Context, ids []int64) ([]*Account, error) {
+	out := make([]*Account, 0, len(ids))
+	for _, id := range ids {
+		if r.live[id] {
+			out = append(out, &Account{ID: id})
+		}
+	}
+	return out, nil
+}
+
+func (m *memoryGatewayPool) DeleteTurn(_ context.Context, accountID int64) error {
+	kept := m.turns[:0]
+	for _, item := range m.turns {
+		if item.AccountID == accountID {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	m.turns = kept
+	return nil
+}
 func (m *memoryGatewayPool) SaveTurn(_ context.Context, turn AstraGatewayPoolTurn) error {
 	for i := range m.turns {
 		if m.turns[i].AccountID == turn.AccountID {
@@ -419,8 +464,8 @@ func TestCandyPassedAccountIsPreferredUntilTheGatewayExpires(t *testing.T) {
 	s.markGatewayCandyTestedThisRound(account.ID, first.Host)
 	require.True(t, s.gatewayCandyAlreadyTested(account.ID, first.Host))
 	require.False(t, s.gatewayCandyAlreadyTested(account.ID, "chat.gateway.unified-9.api.openai.com"))
-	require.Equal(t, "gpt-6.1-sol", gatewayCandyTestModel([]string{"gpt-6-astra", "gpt-6.1-sol"}))
-	require.Equal(t, "gpt-6-astra", gatewayCandyTestModel([]string{"gpt-5.4", "gpt-6-astra"}))
+	require.Equal(t, "gpt-6-astra", gatewayCandyModel)
+	require.Equal(t, "low", gatewayCandyReasoningEffort)
 	concurrency, ok := s.candyPassedAccountSchedule(account.ID, now.Add(time.Minute))
 	require.True(t, ok)
 	require.Equal(t, 3, concurrency)

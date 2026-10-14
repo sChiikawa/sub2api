@@ -230,6 +230,20 @@ func TestScheduledAstraCandySwitchDefaultsOffAndCanEnableSameTicket(t *testing.T
 	require.False(t, s.settingService.CodexTicketCandyObservation(t.Context()))
 }
 
+func TestGatewayCandyRequestUsesAstraLow(t *testing.T) {
+	var body string
+	_, err := fireOpenAICodexPromptShotRequest(context.Background(), http.Header{}, gatewayCandyModel, "", "", "只输出最终答案数字，不要解释。", CandyPrompt, gatewayCandyReasoningEffort, func(req *http.Request) (*http.Response, error) {
+		raw, readErr := io.ReadAll(req.Body)
+		require.NoError(t, readErr)
+		body = string(raw)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(candyStream("21")))}, nil
+	})
+	require.NoError(t, err)
+	require.Contains(t, body, `"model":"gpt-6-astra"`)
+	require.Contains(t, body, `"reasoning_effort":"low"`)
+	require.NotContains(t, body, "gpt-6.1-sol")
+}
+
 func TestScheduledAstraCandySkipsAdminAccountTests(t *testing.T) {
 	s, _, a, ticket, h := candyFixture(t)
 	s.httpUpstream = &harvestProxyUpstream{do: func(_ *http.Request, _ string) (*http.Response, error) {

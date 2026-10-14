@@ -81,21 +81,15 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 	}()
 }
 
+const (
+	gatewayCandyModel           = "gpt-6-astra"
+	gatewayCandyReasoningEffort = "low"
+)
+
 // observeGatewayRotationCandy asks the gateway just used by a business request
-// one Beta candy question. A wrong answer or any request error skips that
-// gateway for this account. The business response is never delayed or replayed.
-func gatewayCandyTestModel(models []string) string {
-	allowed := map[string]struct{}{}
-	for _, model := range models {
-		allowed[normalizeOpenAICodexTicketModel(model)] = struct{}{}
-	}
-	for _, model := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
-		if _, ok := allowed[model]; ok {
-			return model
-		}
-	}
-	return "gpt-6-astra"
-}
+// one Beta candy question on gpt-6-astra at reasoning effort low. A wrong
+// answer or any request error skips that gateway for this account. The
+// business response is never delayed or replayed.
 
 func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, headers http.Header, account *Account, host, cookie string) {
 	if s == nil || s.settingService == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || !s.settingService.CodexGatewayCandyCheck(ctx) {
@@ -104,7 +98,7 @@ func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, 
 	if s.gatewayCandyAlreadyTested(account.ID, host) {
 		return
 	}
-	model := gatewayCandyTestModel(s.openAICodexTicketConfig().Models)
+	model := gatewayCandyModel
 	key := strconv.FormatInt(account.ID, 10) + "\x00" + host
 	s.astraCandyMu.Lock()
 	if s.gatewayCandyRunning >= 2 {
@@ -195,7 +189,7 @@ func (s *OpenAIGatewayService) runGatewayCandy(ctx context.Context, headers http
 	if headers.Get("ChatGPT-Account-ID") != "" && headers.Get("ChatGPT-Account-ID") != account.GetCredential("chatgpt_account_id") {
 		return "candy_stale"
 	}
-	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, func(req *http.Request) (*http.Response, error) {
+	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, gatewayCandyReasoningEffort, func(req *http.Request) (*http.Response, error) {
 		return s.httpUpstream.Do(req, openAIAccountProxyURL(account), account.ID, account.Concurrency)
 	})
 	switch {
@@ -244,7 +238,7 @@ func (s *OpenAIGatewayService) runAstraCandy(ctx context.Context, headers http.H
 		return "candy_stale"
 	}
 	routeChanged := false
-	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, ticket.State, strings.Join(ticket.HarvestCookies, "; "), "只输出最终答案数字，不要解释。", CandyPrompt, func(req *http.Request) (*http.Response, error) {
+	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, ticket.State, strings.Join(ticket.HarvestCookies, "; "), "只输出最终答案数字，不要解释。", CandyPrompt, "", func(req *http.Request) (*http.Response, error) {
 		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(context.WithValue(req.Context(), boundAstraTicketContextKey{}, true)))
 		restoreBoundCodexTicketHarvestIdentity(req.Header, ticket)
 		pinBoundCodexTicketHarvestIdentityRequestBody(req, ticket)

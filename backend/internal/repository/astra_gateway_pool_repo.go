@@ -111,6 +111,14 @@ used_hosts = EXCLUDED.used_hosts`,
 	return err
 }
 
+func (r *astraGatewayPoolRepository) DeleteTurn(ctx context.Context, accountID int64) error {
+	if r == nil || r.db == nil {
+		return errors.New("gateway pool repository unavailable")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM astra_gateway_turns WHERE account_id = $1`, accountID)
+	return err
+}
+
 func (r *astraGatewayPoolRepository) ListCandyPasses(ctx context.Context) ([]service.AstraGatewayCandyAccountRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("gateway pool repository unavailable")
@@ -138,6 +146,14 @@ func (r *astraGatewayPoolRepository) SaveCandyPass(ctx context.Context, accountI
 	_, err := r.db.ExecContext(ctx, `INSERT INTO astra_gateway_candy_pass (account_id, host, expires_at, passed)
 VALUES ($1,$2,$3,$4)
 ON CONFLICT (account_id, host) DO UPDATE SET expires_at = EXCLUDED.expires_at, passed = EXCLUDED.passed`, accountID, host, expires, passed)
+	return err
+}
+
+func (r *astraGatewayPoolRepository) DeleteAccountCandyPasses(ctx context.Context, accountID int64) error {
+	if r == nil || r.db == nil {
+		return errors.New("gateway pool repository unavailable")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM astra_gateway_candy_pass WHERE account_id = $1`, accountID)
 	return err
 }
 
