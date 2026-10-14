@@ -238,10 +238,20 @@ func (s *OpenAIGatewayService) runAstraCandy(ctx context.Context, headers http.H
 		return "candy_stale"
 	}
 	routeChanged := false
-	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, ticket.State, strings.Join(ticket.HarvestCookies, "; "), "只输出最终答案数字，不要解释。", CandyPrompt, "", func(req *http.Request) (*http.Response, error) {
+	cookie := ""
+	if slot, _ := s.currentAccountGateway(account, ticket.Model, time.Now()); slot != nil {
+		cookie = strings.Join(slot.Cookies, "; ")
+	}
+	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, "", func(req *http.Request) (*http.Response, error) {
 		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(context.WithValue(req.Context(), boundAstraTicketContextKey{}, true)))
 		restoreBoundCodexTicketHarvestIdentity(req.Header, ticket)
 		pinBoundCodexTicketHarvestIdentityRequestBody(req, ticket)
+		req.Header.Del(openAICodexTurnStateHeader)
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		} else {
+			req.Header.Del("Cookie")
+		}
 		resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 		if resp != nil {
 			expected := req.Cookies()

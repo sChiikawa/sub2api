@@ -352,7 +352,7 @@ func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, 
 	defer cancel()
 	bodyJSON := `{"model":` + jsonString(model)
 	if effort := strings.TrimSpace(reasoningEffort); effort != "" {
-		bodyJSON += `,"reasoning_effort":` + jsonString(effort)
+		bodyJSON += `,"reasoning":{"effort":` + jsonString(effort) + `}`
 	}
 	bodyJSON += `,"instructions":` + jsonString(instructions) + `,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":` + jsonString(prompt) + `}]}],"stream":true,"store":false,"parallel_tool_calls":true,"include":["reasoning.encrypted_content"]}`
 	body := []byte(bodyJSON)

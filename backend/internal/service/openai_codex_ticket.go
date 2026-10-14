@@ -741,6 +741,8 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	model = normalizeOpenAICodexTicketModel(model)
 	if s.shouldRotateCodexOAuthGateway(ctx, account, model) {
 		s.assignBusinessGatewayCookie(h, account, model)
+		h.Del(openAICodexTurnStateHeader)
+		return nil
 	}
 	if model == "" || !s.openAICodexTicketGatedModel(model) {
 		return nil

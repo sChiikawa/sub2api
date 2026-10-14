@@ -240,7 +240,8 @@ func TestGatewayCandyRequestUsesAstraLow(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, body, `"model":"gpt-6-astra"`)
-	require.Contains(t, body, `"reasoning_effort":"low"`)
+	require.Contains(t, body, `"reasoning":{"effort":"low"}`)
+	require.NotContains(t, body, `"reasoning_effort"`)
 	require.NotContains(t, body, "gpt-6.1-sol")
 }
 
