@@ -1077,10 +1077,7 @@ func (s *OpenAIGatewayService) overlayAccountGatewayCookie(req *http.Request, ac
 	if s == nil || req == nil || account == nil {
 		return
 	}
-	raw, _ := snapshotHTTPRequestBody(req)
-	if req.GetBody == nil && len(raw) > 0 {
-		replaceHTTPRequestJSONBody(req, raw)
-	}
+	raw := peekHTTPRequestBody(req)
 	model := extractOpenAICodexTicketModel(raw)
 	if !s.shouldRotateCodexOAuthGateway(req.Context(), account, model) {
 		return

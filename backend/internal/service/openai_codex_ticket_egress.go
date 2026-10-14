@@ -161,6 +161,22 @@ func replaceHTTPRequestJSONBody(req *http.Request, body []byte) {
 	}
 }
 
+// peekHTTPRequestBody reads the JSON body for routing decisions. A one-shot
+// body is put back for the current attempt and stays non-replayable, so a
+// proxy fallback does not send it a second time.
+func peekHTTPRequestBody(req *http.Request) []byte {
+	if req == nil {
+		return nil
+	}
+	replayable := req.GetBody != nil
+	raw, _ := snapshotHTTPRequestBody(req)
+	if !replayable && len(raw) > 0 {
+		req.Body = io.NopCloser(bytes.NewReader(raw))
+		req.ContentLength = int64(len(raw))
+	}
+	return raw
+}
+
 func snapshotHTTPRequestBody(req *http.Request) ([]byte, error) {
 	if req == nil {
 		return nil, nil

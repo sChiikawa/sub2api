@@ -269,10 +269,7 @@ func (s *OpenAIGatewayService) dressSharedAstraBusinessRequest(req *http.Request
 	if req == nil || account == nil || (s != nil && s.UnifiedAstraTicketsEnabled(req.Context())) {
 		return req, nil
 	}
-	raw, _ := snapshotHTTPRequestBody(req)
-	if req.GetBody == nil && len(raw) > 0 {
-		replaceHTTPRequestJSONBody(req, raw)
-	}
+	raw := peekHTTPRequestBody(req)
 	model := extractOpenAICodexTicketModel(raw)
 	donor, shared := s.sharedAstraBusinessTicket(req.Context(), account, "sse", model)
 	if shared != nil {
