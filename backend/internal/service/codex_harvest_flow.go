@@ -66,18 +66,19 @@ type CodexHarvestFlowStage struct {
 }
 
 type CodexHarvestFlowAccount struct {
-	ID              int64                     `json:"id"`
-	Name            string                    `json:"name"`
-	Status          string                    `json:"status"`
-	Schedulable     bool                      `json:"schedulable"`
-	HarvestSelected bool                      `json:"harvest_selected"`
-	SkipHarvest     bool                      `json:"skip_harvest"`
-	InScope         bool                      `json:"in_scope"`
-	Availability    string                    `json:"availability"`
-	RecoverAt       *time.Time                `json:"recover_at,omitempty"`
-	Tickets         []OpenAICodexTicketStatus `json:"tickets"`
-	ReadyCount      int                       `json:"ready_count"`
-	BlockedCount    int                       `json:"blocked_count"`
+	Coverage        *CodexHarvestAccountCoverage `json:"coverage,omitempty"`
+	ID              int64                        `json:"id"`
+	Name            string                       `json:"name"`
+	Status          string                       `json:"status"`
+	Schedulable     bool                         `json:"schedulable"`
+	HarvestSelected bool                         `json:"harvest_selected"`
+	SkipHarvest     bool                         `json:"skip_harvest"`
+	InScope         bool                         `json:"in_scope"`
+	Availability    string                       `json:"availability"`
+	RecoverAt       *time.Time                   `json:"recover_at,omitempty"`
+	Tickets         []OpenAICodexTicketStatus    `json:"tickets"`
+	ReadyCount      int                          `json:"ready_count"`
+	BlockedCount    int                          `json:"blocked_count"`
 }
 
 type CodexHarvestFlowHarvest struct {
@@ -123,6 +124,7 @@ type CodexHarvestFlowCounts struct {
 }
 
 type CodexHarvestFlowSnapshot struct {
+	Coverage     *CodexHarvestCoverage     `json:"coverage,omitempty"`
 	GeneratedAt  time.Time                 `json:"generated_at"`
 	Harvest      CodexHarvestFlowHarvest   `json:"harvest"`
 	Sidecar      CodexHarvestFlowSidecar   `json:"sidecar"`
@@ -886,6 +888,10 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 		Events:   events,
 		Accounts: []CodexHarvestFlowAccount{},
 	}
+	if len(controls) > 0 && controls[0] != nil {
+		coverage := controls[0].coverage.snapshot()
+		snapshot.Coverage = &coverage
+	}
 	if snapshot.Harvest.HarvestProxy == "" && harvestProxy == mihomo.Endpoint {
 		snapshot.Harvest.HarvestProxy = mihomo.Endpoint
 	}
@@ -925,6 +931,11 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			if ticket.Blocked {
 				item.BlockedCount++
 				snapshot.Counts.TicketsBlocked++
+			}
+		}
+		if snapshot.Coverage != nil {
+			if coverage, ok := snapshot.Coverage.Accounts[account.ID]; ok {
+				item.Coverage = &coverage
 			}
 		}
 		snapshot.Accounts = append(snapshot.Accounts, item)

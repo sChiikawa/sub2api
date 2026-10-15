@@ -1,5 +1,15 @@
 export default {
   harvestFlow: {
+    coverageAccountTitle: 'Account ticket coverage',
+    coverageAccountDurations: 'With / without ticket: {ready} / {missing}',
+    coverageAccountSince: 'Account observed since {time}',
+    coverageTitle: 'Average account ticket coverage',
+    coverageDurations: 'Average with / without ticket: {ready} / {missing}',
+    coverageWaiting: 'Waiting for observed samples',
+    coverageSince: 'Since {time} · {n} accounts',
+    coverageStale: 'Background sampling is delayed; showing the last snapshot',
+    coverageHint: 'Estimated every 5 seconds for currently eligible accounts in the harvest scope. Any enabled model with a valid ticket counts as covered. Average of each account’s covered / (covered + uncovered) time. Restarts, scope/model changes or disabling harvest reset statistics; excluded accounts and sampling gaps do not count.',
+
     transportLabel: 'Mint transport',
     edgeLabel: 'Edge IP (optional)',
     edgeHint: 'Dial this public IP while keeping chatgpt.com Host, TLS SNI and certificate verification. Leave empty for DNS. The edge IP controls the connection, not probe admission.',

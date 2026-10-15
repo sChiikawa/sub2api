@@ -1,5 +1,15 @@
 export default {
   harvestFlow: {
+    coverageAccountTitle: '账号持票占比',
+    coverageAccountDurations: '有票 / 无票：{ready} / {missing}',
+    coverageAccountSince: '本账号统计始于 {time}',
+    coverageTitle: '账号平均持票占比',
+    coverageDurations: '平均有票 / 无票：{ready} / {missing}',
+    coverageWaiting: '等待有效统计样本',
+    coverageSince: '统计始于 {time} · {n} 个账号',
+    coverageStale: '后台采样已延迟，当前显示上次统计',
+    coverageHint: '每 5 秒采样估算；当前采集范围内可采集账号，任一启用模型有有效票即计有票。逐账号计算有票 ÷（有票 + 无票）后取平均。关闭打票、范围或模型变更及服务重启后重新统计；移出范围的账号不参与，采样中断不计时。',
+
     transportLabel: '采票协议',
     edgeLabel: '边缘 IP（可选）',
     edgeHint: '指定公网 IP 直拨，Host、TLS SNI 和证书校验仍使用 chatgpt.com；留空走 DNS。边缘 IP 仅用于连接，不参与探针通过判定。',
