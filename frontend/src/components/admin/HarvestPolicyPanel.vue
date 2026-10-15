@@ -112,7 +112,7 @@
               <input id="codex-gateway-candy-prefetch" type="checkbox" v-model="form.openai_codex_gateway_candy_prefetch" />
               <span>{{ localText('提前测试网关糖果', 'Prefetch gateway candy tests') }}</span>
             </label>
-            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。按每个分组里账号正在占用的并发槽计算，提前准备的过关账号数是 占用并发 ÷ 上面的通过后并发 + 1。用 gpt-6-astra、推理强度 low 测当前网关。通过后的 240 秒内使用上面的并发。是否优先调度由下面的开关决定。', 'Off by default. For each group, the number of accounts prepared ahead is the in-use concurrency divided by the pass concurrency above, plus 1. Each test uses gpt-6-astra at reasoning effort low on the current gateway. A pass uses that concurrency for 240 seconds. Whether those accounts are scheduled first is controlled by the switch below.') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。按每个分组里账号正在占用的并发槽计算，提前准备的过关账号数是 占用并发 ÷ 上面的通过后并发。用 gpt-6-astra、推理强度 low 测当前网关。通过后的 240 秒内使用上面的并发。是否优先调度由下面的开关决定。', 'Off by default. For each group, the number of accounts prepared ahead is the in-use concurrency divided by the pass concurrency above. Each test uses gpt-6-astra at reasoning effort low on the current gateway. A pass uses that concurrency for 240 seconds. Whether those accounts are scheduled first is controlled by the switch below.') }}</p>
             <label class="mt-3 flex items-center gap-2 text-sm" for="codex-gateway-candy-prefer">
               <input id="codex-gateway-candy-prefer" type="checkbox" v-model="form.openai_codex_gateway_candy_prefer" />
               <span>{{ localText('优先调度已通过糖果测试的账号', 'Prefer accounts that passed the candy test') }}</span>

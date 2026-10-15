@@ -20,7 +20,7 @@ func gatewayCandyPrefetchCount(used, slotSize int) int {
 	if used < 0 {
 		used = 0
 	}
-	return used/slotSize + 1
+	return used / slotSize
 }
 
 func (s *OpenAIGatewayService) gatewayCandyProbeEnabled(ctx context.Context) bool {

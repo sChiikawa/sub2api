@@ -8,10 +8,10 @@ import (
 )
 
 func TestGatewayCandyPrefetchCount(t *testing.T) {
-	require.Equal(t, 1, gatewayCandyPrefetchCount(0, 4))
-	require.Equal(t, 6, gatewayCandyPrefetchCount(20, 4))
-	require.Equal(t, 2, gatewayCandyPrefetchCount(4, 4))
-	require.Equal(t, 1, gatewayCandyPrefetchCount(3, 4))
+	require.Equal(t, 0, gatewayCandyPrefetchCount(0, 4))
+	require.Equal(t, 5, gatewayCandyPrefetchCount(20, 4))
+	require.Equal(t, 1, gatewayCandyPrefetchCount(4, 4))
+	require.Equal(t, 0, gatewayCandyPrefetchCount(3, 4))
 }
 
 type candyPreferSettingRepo struct {
