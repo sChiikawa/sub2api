@@ -53,7 +53,7 @@ func TestScheduledAstraCandyIsObservationOnly(t *testing.T) {
 				calls++
 				require.Equal(t, "http://source.invalid:8080", proxy)
 				require.Equal(t, h.Get("Authorization"), req.Header.Get("Authorization"))
-				require.Equal(t, ticket.State, req.Header.Get(openAICodexTurnStateHeader))
+				require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
 				require.Equal(t, strings.Join(ticket.HarvestCookies, "; "), req.Header.Get("Cookie"))
 				require.True(t, IsOpenAICodexStateProbeRequest(req.Context()))
 				require.True(t, IsBoundAstraTicketRequest(req.Context()))

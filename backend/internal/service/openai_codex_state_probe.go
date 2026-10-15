@@ -365,6 +365,7 @@ func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, 
 	req.Host = "chatgpt.com"
 	req.Header = headers.Clone()
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("session_id", uuid.NewString())
