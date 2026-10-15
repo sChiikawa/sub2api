@@ -95,22 +95,31 @@ func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, 
 	if s == nil || s.settingService == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || !s.settingService.CodexGatewayCandyCheck(ctx) {
 		return
 	}
+	s.queueGatewayCandyProbe(ctx, headers, account, host, cookie)
+}
+
+// queueGatewayCandyProbe starts one gateway candy probe when a worker is free.
+// It returns false when both workers are already busy.
+func (s *OpenAIGatewayService) queueGatewayCandyProbe(ctx context.Context, headers http.Header, account *Account, host, cookie string) bool {
+	if s == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || headers == nil {
+		return true
+	}
 	if s.gatewayCandyAlreadyTested(account.ID, host) {
-		return
+		return true
 	}
 	model := gatewayCandyModel
 	key := strconv.FormatInt(account.ID, 10) + "\x00" + host
 	s.astraCandyMu.Lock()
 	if s.gatewayCandyRunning >= 2 {
 		s.astraCandyMu.Unlock()
-		return
+		return false
 	}
 	if s.gatewayCandyInflight == nil {
 		s.gatewayCandyInflight = map[string]struct{}{}
 	}
 	if _, running := s.gatewayCandyInflight[key]; running {
 		s.astraCandyMu.Unlock()
-		return
+		return true
 	}
 	s.gatewayCandyInflight[key] = struct{}{}
 	s.gatewayCandyRunning++
@@ -144,6 +153,7 @@ func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, 
 		}
 		s.skipAccountGateway(&Account{ID: id, Name: name}, model, reason)
 	}()
+	return true
 }
 
 func (s *OpenAIGatewayService) gatewayCookieExpires(host, cookie string) time.Time {
@@ -176,7 +186,7 @@ func (s *OpenAIGatewayService) gatewayCookieExpires(host, cookie string) time.Ti
 }
 
 func (s *OpenAIGatewayService) runGatewayCandy(ctx context.Context, headers http.Header, id int64, model, cookie string) string {
-	if s.settingService == nil || !s.settingService.CodexGatewayCandyCheck(ctx) {
+	if s.settingService == nil || !s.gatewayCandyProbeEnabled(ctx) {
 		return "candy_disabled"
 	}
 	if s.accountRepo == nil || s.httpUpstream == nil {

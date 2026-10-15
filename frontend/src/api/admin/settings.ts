@@ -658,6 +658,8 @@ export interface SystemSettings {
   openai_codex_ticket_strict_response?: boolean;
   openai_codex_ticket_candy_observation?: boolean;
   openai_codex_gateway_candy_check?: boolean;
+  openai_codex_gateway_candy_prefetch?: boolean;
+  openai_codex_gateway_candy_prefer?: boolean;
   openai_codex_gateway_candy_concurrency?: number;
   openai_codex_ticket_harvest_proxy_url: string;
   openai_codex_ticket_static_proxy_url?: string;
@@ -1034,6 +1036,8 @@ export interface UpdateSettingsRequest {
   openai_codex_ticket_strict_response?: boolean;
   openai_codex_ticket_candy_observation?: boolean;
   openai_codex_gateway_candy_check?: boolean;
+  openai_codex_gateway_candy_prefetch?: boolean;
+  openai_codex_gateway_candy_prefer?: boolean;
   openai_codex_gateway_candy_concurrency?: number;
   openai_codex_ticket_models?: string[];
   claude_code_client_version?: string;

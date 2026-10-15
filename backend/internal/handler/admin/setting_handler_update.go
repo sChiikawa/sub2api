@@ -29,6 +29,8 @@ type UpdateSettingsRequest struct {
 	OpenAICodexTicketStrictResponse    *bool                            `json:"openai_codex_ticket_strict_response"`
 	OpenAICodexTicketCandyObservation  *bool                            `json:"openai_codex_ticket_candy_observation"`
 	OpenAICodexGatewayCandyCheck       *bool                            `json:"openai_codex_gateway_candy_check"`
+	OpenAICodexGatewayCandyPrefetch    *bool                            `json:"openai_codex_gateway_candy_prefetch"`
+	OpenAICodexGatewayCandyPrefer      *bool                            `json:"openai_codex_gateway_candy_prefer"`
 	OpenAICodexGatewayCandyConcurrency *int                             `json:"openai_codex_gateway_candy_concurrency"`
 	OpenAICodexTicketFailClosed        *bool                            `json:"openai_codex_ticket_fail_closed"`
 	OpenAICodexTicketStrategy          *string                          `json:"openai_codex_ticket_strategy"`
@@ -2086,6 +2088,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexGatewayCandyCheck
 		}(),
+		OpenAICodexGatewayCandyPrefetch: func() bool {
+			if req.OpenAICodexGatewayCandyPrefetch != nil {
+				return *req.OpenAICodexGatewayCandyPrefetch
+			}
+			return previousSettings.OpenAICodexGatewayCandyPrefetch
+		}(),
+		OpenAICodexGatewayCandyPrefer: func() bool {
+			if req.OpenAICodexGatewayCandyPrefer != nil {
+				return *req.OpenAICodexGatewayCandyPrefer
+			}
+			return previousSettings.OpenAICodexGatewayCandyPrefer
+		}(),
 		OpenAICodexGatewayCandyConcurrency: func() int {
 			if req.OpenAICodexGatewayCandyConcurrency != nil {
 				return service.NormalizeGatewayCandyConcurrency(*req.OpenAICodexGatewayCandyConcurrency)
@@ -2736,6 +2750,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexTicketStrictResponse:                        updatedSettings.OpenAICodexTicketStrictResponse,
 		OpenAICodexTicketCandyObservation:                      updatedSettings.OpenAICodexTicketCandyObservation,
 		OpenAICodexGatewayCandyCheck:                           updatedSettings.OpenAICodexGatewayCandyCheck,
+		OpenAICodexGatewayCandyPrefetch:                        updatedSettings.OpenAICodexGatewayCandyPrefetch,
+		OpenAICodexGatewayCandyPrefer:                          updatedSettings.OpenAICodexGatewayCandyPrefer,
 		OpenAICodexGatewayCandyConcurrency:                     updatedSettings.OpenAICodexGatewayCandyConcurrency,
 		OpenAICodexTicketFailClosed:                            updatedSettings.OpenAICodexTicketFailClosed,
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",

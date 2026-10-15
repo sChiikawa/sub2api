@@ -988,6 +988,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAICodexTicketStrictResponse = settings[SettingKeyOpenAICodexTicketStrict] == "true"
 	result.OpenAICodexTicketCandyObservation = settings[SettingKeyOpenAICodexTicketCandyObservation] == "true"
 	result.OpenAICodexGatewayCandyCheck = settings[SettingKeyOpenAICodexGatewayCandyCheck] == "true"
+	result.OpenAICodexGatewayCandyPrefetch = settings[SettingKeyOpenAICodexGatewayCandyPrefetch] == "true"
+	result.OpenAICodexGatewayCandyPrefer = settings[SettingKeyOpenAICodexGatewayCandyPrefer] == "true"
 	result.OpenAICodexGatewayCandyConcurrency = defaultGatewayCandyConcurrency
 	if raw := strings.TrimSpace(settings[SettingKeyOpenAICodexGatewayCandyConcurrency]); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {

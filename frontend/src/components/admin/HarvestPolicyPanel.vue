@@ -108,6 +108,16 @@
             <label class="mt-3 flex items-center gap-2 text-sm" for="codex-gateway-candy-concurrency">{{ localText('通过后账号并发', 'Account concurrency after a pass') }}
               <input id="codex-gateway-candy-concurrency" v-model.number="form.openai_codex_gateway_candy_concurrency" type="number" min="1" max="32" class="input w-24" />
             </label>
+            <label class="mt-3 flex items-center gap-2 text-sm" for="codex-gateway-candy-prefetch">
+              <input id="codex-gateway-candy-prefetch" type="checkbox" v-model="form.openai_codex_gateway_candy_prefetch" />
+              <span>{{ localText('提前测试网关糖果', 'Prefetch gateway candy tests') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。按每个分组里账号正在占用的并发槽计算，提前准备的过关账号数是 占用并发 ÷ 上面的通过后并发 + 1。用 gpt-6-astra、推理强度 low 测当前网关。通过后的 240 秒内使用上面的并发。是否优先调度由下面的开关决定。', 'Off by default. For each group, the number of accounts prepared ahead is the in-use concurrency divided by the pass concurrency above, plus 1. Each test uses gpt-6-astra at reasoning effort low on the current gateway. A pass uses that concurrency for 240 seconds. Whether those accounts are scheduled first is controlled by the switch below.') }}</p>
+            <label class="mt-3 flex items-center gap-2 text-sm" for="codex-gateway-candy-prefer">
+              <input id="codex-gateway-candy-prefer" type="checkbox" v-model="form.openai_codex_gateway_candy_prefer" />
+              <span>{{ localText('优先调度已通过糖果测试的账号', 'Prefer accounts that passed the candy test') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500">{{ localText('默认关闭。打开后，在当前网关 240 秒有效期内，已通过糖果测试的账号排在其他账号前面，不再只靠优先级 1 参与打分。粘性会话如果自己没过关，也会让给已经过关的账号。关闭后恢复原来的打分调度。', 'Off by default. While on, accounts that passed the candy test stay ahead of other accounts for the 240 seconds of the current gateway, instead of relying on priority 1 inside the score. A sticky session that has not passed yields to an account that has. Turning this off restores the previous scoring.') }}</p>
           </div>
           <label class="mt-3 flex items-center gap-2 text-sm"><input id="codex-ticket-strict" type="checkbox" v-model="form.openai_codex_ticket_strict_response" />{{ localText('严格拦截票据响应不匹配（默认关闭）', 'Reject mismatched ticket responses (off by default)') }}</label>
           <p class="mt-1 text-xs text-gray-500">{{ localText('仅在 HTTP 响应头明确不匹配时拦截正文；当前请求可能已计费，不会自动重放。关闭时只更新后续票据调度。', 'Rejects the body when HTTP response state headers mismatch. The upstream may have charged; the request is not replayed. When off, only future ticket scheduling changes.') }}</p>
@@ -148,6 +158,8 @@ function policyOf(settings: SystemSettings) {
     openai_codex_ticket_strategy: settings.openai_codex_ticket_strategy || 'standby',
     openai_codex_ticket_candy_observation: settings.openai_codex_ticket_candy_observation ?? false,
     openai_codex_gateway_candy_check: settings.openai_codex_gateway_candy_check ?? false,
+    openai_codex_gateway_candy_prefetch: settings.openai_codex_gateway_candy_prefetch ?? false,
+    openai_codex_gateway_candy_prefer: settings.openai_codex_gateway_candy_prefer ?? false,
     openai_codex_gateway_candy_concurrency: settings.openai_codex_gateway_candy_concurrency || 3,
     openai_codex_ticket_strict_response: settings.openai_codex_ticket_strict_response ?? false,
     openai_codex_ticket_harvest_scope: {

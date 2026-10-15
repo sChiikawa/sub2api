@@ -58,6 +58,26 @@ func (s *SettingService) CodexGatewayCandyCheck(ctx context.Context) bool {
 	return err == nil && value == "true"
 }
 
+const SettingKeyOpenAICodexGatewayCandyPrefetch = "openai_codex_gateway_candy_prefetch"
+
+func (s *SettingService) CodexGatewayCandyPrefetch(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexGatewayCandyPrefetch)
+	return err == nil && value == "true"
+}
+
+const SettingKeyOpenAICodexGatewayCandyPrefer = "openai_codex_gateway_candy_prefer"
+
+func (s *SettingService) CodexGatewayCandyPrefer(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexGatewayCandyPrefer)
+	return err == nil && value == "true"
+}
+
 const SettingKeyOpenAICodexGatewayCandyConcurrency = "openai_codex_gateway_candy_concurrency"
 
 func (s *SettingService) CodexGatewayCandyConcurrency(ctx context.Context) int {

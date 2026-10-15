@@ -618,6 +618,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexTicketStrict] = strconv.FormatBool(settings.OpenAICodexTicketStrictResponse)
 	updates[SettingKeyOpenAICodexTicketCandyObservation] = strconv.FormatBool(settings.OpenAICodexTicketCandyObservation)
 	updates[SettingKeyOpenAICodexGatewayCandyCheck] = strconv.FormatBool(settings.OpenAICodexGatewayCandyCheck)
+	updates[SettingKeyOpenAICodexGatewayCandyPrefetch] = strconv.FormatBool(settings.OpenAICodexGatewayCandyPrefetch)
+	updates[SettingKeyOpenAICodexGatewayCandyPrefer] = strconv.FormatBool(settings.OpenAICodexGatewayCandyPrefer)
 	updates[SettingKeyOpenAICodexGatewayCandyConcurrency] = strconv.Itoa(NormalizeGatewayCandyConcurrency(settings.OpenAICodexGatewayCandyConcurrency))
 	if settings.OpenAICodexTicketStaticProxyURL != "" {
 		updates[SettingKeyOpenAICodexTicketStaticProxyURL] = settings.OpenAICodexTicketStaticProxyURL
