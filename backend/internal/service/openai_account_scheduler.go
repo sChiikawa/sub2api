@@ -459,7 +459,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 				selection = nil
 			}
 		}
-		if selection != nil && selection.Account != nil {
+		if selection != nil && selection.Account != nil && selection.Acquired {
 			decision.Layer = openAIAccountScheduleLayerPreviousResponse
 			decision.StickyPreviousHit = true
 			decision.SelectedAccountID = selection.Account.ID
@@ -640,10 +640,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, true, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, s.candyScheduleConcurrency(account))
-	if acquireErr != nil && req.DisableStickyEscape {
+	if acquireErr != nil {
 		return nil, false, acquireErr
 	}
-	if acquireErr == nil && result != nil && result.Acquired {
+	if result != nil && result.Acquired {
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
 		}
@@ -654,20 +654,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			AccountRequestID: result.RequestID,
 		}), false, nil
 	}
-
-	cfg := s.service.schedulingConfig()
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
-	if s.service.concurrencyService != nil {
-		if escapeCfg.enabled && !req.DisableStickyEscape && acquireErr == nil && result != nil && !result.Acquired {
-			errorRate, ttft, _ := s.stats.snapshot(accountID)
-			slog.Info("sticky_escape_triggered",
-				"account_id", accountID,
-				"reason", "concurrency_full",
-				"error_rate", errorRate,
-				"ttft", ttft,
-			)
-			return nil, true, nil
-		}
+	// Task-owner lookups cannot move. Every other sticky session leaves
+	// immediately and the caller selects another account.
+	if req.DisableStickyEscape && s.service.concurrencyService != nil {
+		cfg := s.service.schedulingConfig()
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
@@ -678,7 +668,11 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			},
 		}), false, nil
 	}
-	return nil, false, nil
+	slog.Info("sticky_escape_triggered",
+		"account_id", accountID,
+		"reason", "concurrency_full",
+	)
+	return nil, true, nil
 }
 
 func (s *defaultOpenAIAccountScheduler) candyScheduleConcurrency(account *Account) int {
@@ -1537,18 +1531,6 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Acquired:         true,
 				ReleaseFunc:      result.ReleaseFunc,
 				AccountRequestID: result.RequestID,
-			}), nil
-		}
-		if s.service.concurrencyService != nil {
-			cfg := s.service.schedulingConfig()
-			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: account,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: s.candyScheduleConcurrency(account),
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				},
 			}), nil
 		}
 	}

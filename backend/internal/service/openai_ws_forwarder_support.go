@@ -491,7 +491,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	}
 
 	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-	if acquireErr == nil && result.Acquired {
+	if acquireErr == nil && result != nil && result.Acquired {
 		logOpenAIWSBindResponseAccountWarn(
 			derefGroupID(groupID),
 			accountID,
@@ -504,19 +504,8 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 			ReleaseFunc: result.ReleaseFunc,
 		}), nil
 	}
-
-	cfg := s.schedulingConfig()
-	if s.concurrencyService != nil {
-		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
-		}), nil
-	}
+	// The account that owns this response has no free slot. Callers select
+	// another account instead of waiting on this one.
 	return nil, nil
 }
 
