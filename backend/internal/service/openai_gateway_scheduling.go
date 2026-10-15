@@ -1249,6 +1249,18 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				}
 			}
 			if allowed {
+				result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+				if err == nil && result != nil && result.Acquired {
+					selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID)
+					return markStickySessionHit(selection, stickyHit), selectErr
+				}
+				if stickyAccountID > 0 && stickyAccountID == account.ID {
+					if effectiveExcludedIDs == nil {
+						effectiveExcludedIDs = make(map[int64]struct{})
+					}
+					effectiveExcludedIDs[account.ID] = struct{}{}
+					continue
+				}
 				break
 			}
 			if rpmState.Current < rpmState.Limit && headroomFallback == nil {
@@ -1258,18 +1270,6 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				effectiveExcludedIDs = make(map[int64]struct{})
 			}
 			effectiveExcludedIDs[account.ID] = struct{}{}
-		}
-		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-		if err == nil && result != nil && result.Acquired {
-			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID)
-			return markStickySessionHit(selection, stickyHit), selectErr
-		}
-		if stickyAccountID > 0 && stickyAccountID == account.ID {
-			if effectiveExcludedIDs == nil {
-				effectiveExcludedIDs = make(map[int64]struct{})
-			}
-			effectiveExcludedIDs[account.ID] = struct{}{}
-			continue
 		}
 		selection, selectErr := s.newSelectionResult(ctx, account, false, nil, "", &AccountWaitPlan{
 			AccountID:      account.ID,
