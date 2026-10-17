@@ -30,7 +30,7 @@ func TestParallelHarvest780ContinuationSharesRequestBudget(t *testing.T) {
 				account := ticketTestAccount(41)
 				var requests atomic.Int64
 				state := mint780State(time.Now())
-				pair := mint780Pair(time.Now().Add(time.Hour), "unified-123")
+				pair := mint780Pair(time.Now().Add(time.Hour), "unified-88")
 				svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780, TTLSeconds: 240}, &codexTicketFuncUpstream{do: func(req *http.Request) (*http.Response, error) {
 					requests.Add(1)
 					h := http.Header{}

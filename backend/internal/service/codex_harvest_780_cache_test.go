@@ -15,7 +15,7 @@ import (
 func TestCodex780ProbeDoesNotReuseCachedRoutesAcrossCandidates(t *testing.T) {
 	account := ticketTestAccount(1)
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{TargetLength: 780}}}}
-	pair := mint780Pair(time.Now().Add(time.Hour), "unified-123")
+	pair := mint780Pair(time.Now().Add(time.Hour), "unified-88")
 	state := mint780State(time.Now())
 	calls := 0
 	svc.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {

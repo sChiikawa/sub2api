@@ -62,21 +62,28 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('Harvest controls draft and request ordering', () => {
-  it('does not expose the retired gateway filter', async () => {
+  it('defaults to unified-88 without overwriting a saved gateway', async () => {
     wrapper = mount(HarvestControlsPanel)
     await flushPromises()
-    expect(wrapper.find(selector('target-gateway')).exists()).toBe(false)
+    expect(input(wrapper, 'target-gateway').value).toBe('unified-88')
     expect(api.save).not.toHaveBeenCalled()
+    const data = snapshot()
+    data.settings.target_gateway = 'unified-95'
+    api.getControls.mockResolvedValue(data)
+    await wrapper.setProps({ refreshKey: 'saved-gateway' })
+    await flushPromises()
+    expect(input(wrapper, 'target-gateway').value).toBe('unified-95')
   })
-  it('saves edge IP and protocol through the existing controls API', async () => {
+  it('saves edge IP, gateway and protocol through the existing controls API', async () => {
     api.save.mockImplementation(async settings => settings)
     wrapper = mount(HarvestControlsPanel)
     await flushPromises()
     await wrapper.get(selector('edge-ip')).setValue('104.18.32.7')
+    await wrapper.get(selector('target-gateway')).setValue('unified-88')
     await wrapper.get('select:not([data-testid])').setValue('websocket')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({edge_ip: '104.18.32.7', transport: 'websocket'}))
+    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({edge_ip: '104.18.32.7', target_gateway: 'unified-88', transport: 'websocket'}))
     expect(wrapper.get(selector('save-controls')).attributes('disabled')).toBeDefined()
   })
 

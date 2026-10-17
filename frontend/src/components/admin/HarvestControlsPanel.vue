@@ -24,6 +24,9 @@
           <label class="mb-3 block text-sm">{{ t('admin.harvestFlow.transportLabel') }}
             <select v-model="draft.transport" class="input mt-2 max-w-xs"><option value="sse">SSE</option><option value="websocket">WebSocket</option></select>
           </label>
+          <label class="block text-sm">{{ t('admin.harvestFlow.gatewayLabel') }}
+            <input v-model="draft.target_gateway" data-testid="target-gateway" class="input mt-2 max-w-xs" placeholder="unified-88 / any" required />
+          </label>
           <p class="mt-2 text-xs text-gray-500">{{ t('admin.harvestFlow.gatewayHint') }}</p>
           <p class="mt-2 text-xs text-gray-500">{{ t('admin.harvestFlow.nativeHint') }}</p>
         </div>
@@ -123,7 +126,7 @@ const advanced = ref(false)
 const error = ref('')
 let requestId = 0
 let disposed = false
-const copy = (v: CodexHarvestControls): CodexHarvestControls => ({ ...v, edge_ip: v.edge_ip || '', transport: v.transport || 'sse', speed: { ...v.speed } })
+const copy = (v: CodexHarvestControls): CodexHarvestControls => ({ ...v, edge_ip: v.edge_ip || '', target_gateway: v.target_gateway || 'unified-88', transport: v.transport || 'sse', speed: { ...v.speed } })
 const defaultSpeedFields: { key: keyof CodexHarvestSpeed; min: number; max: number; step: number }[] = [
   { key: 'round_interval_seconds', min: 1, max: 3600, step: 1 },
   { key: 'probe_interval_seconds', min: 0, max: 60, step: 1 },
@@ -137,7 +140,7 @@ const speedFields = computed(() => defaultSpeedFields.map(field => {
   const bound = remote.value?.bounds?.[field.key]
   return bound ? { ...field, min: bound.min, max: bound.max } : field
 }))
-const same = (a: CodexHarvestControls | null, b: CodexHarvestControls | null) => !!a && !!b && a.version === b.version && a.edge_ip === b.edge_ip && a.transport === b.transport && a.node_memory_enabled === b.node_memory_enabled && speedFields.value.every(f => a.speed[f.key] === b.speed[f.key])
+const same = (a: CodexHarvestControls | null, b: CodexHarvestControls | null) => !!a && !!b && a.version === b.version && a.edge_ip === b.edge_ip && a.target_gateway === b.target_gateway && a.transport === b.transport && a.node_memory_enabled === b.node_memory_enabled && speedFields.value.every(f => a.speed[f.key] === b.speed[f.key])
 const dirty = computed(() => !!draft.value && !same(draft.value, saved.value))
 const live = computed(() => props.runtime || remote.value?.runtime)
 const selectionLabel = computed(() => {

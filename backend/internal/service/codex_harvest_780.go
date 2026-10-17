@@ -213,8 +213,11 @@ func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account 
 		out.Err = err
 		return
 	}
-	// Gateway claims describe routing, not ticket quality.
-	target := "any"
+	// Empty means the historical default. "any" keeps every valid gateway.
+	target := normalizeCodex780Gateway(controls.TargetGateway)
+	if target == "" {
+		target = "unified-88"
+	}
 	out.Gateway = target
 	out.Transport = "sse"
 	out.EdgeIP = controls.EdgeIP

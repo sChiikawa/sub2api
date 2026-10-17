@@ -91,6 +91,33 @@ func TestCodex780GatewayHostsAndAnyKeepActualRoute(t *testing.T) {
 	require.NotNil(t, svc.lookupOpenAICodexTicket(account, "gpt-6-astra"), "legacy host setting must not discard a probe-verified ticket")
 }
 
+func TestCodex780HarvestAcceptsOnlyTheConfiguredGateway(t *testing.T) {
+	account := ticketTestAccount(1)
+	now := time.Now()
+	for _, tc := range []struct {
+		target, host, want string
+	}{
+		{"unified-88", "unified-88", "success"},
+		{"88", "unified-88", "success"},
+		{"unified-88", "unified-123", "invalid_route"},
+		{"any", "unified-123", "success"},
+	} {
+		t.Run(tc.target+"/"+tc.host, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{TargetLength: 780}}}}
+			svc.codexHarvest = &CodexHarvestService{current: CodexHarvestControls{Transport: "sse", TargetGateway: tc.target}, loadedUntil: now.Add(time.Hour)}
+			pair := mint780Pair(now.Add(time.Hour), tc.host)
+			state := mint780State(now)
+			svc.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
+				h := http.Header{"Set-Cookie": pair}
+				h.Set(openAICodexTurnStateHeader, state)
+				return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
+			}}
+			out := svc.executeCodexHarvestProbe(context.Background(), account, "token", "gpt-6-astra", "", time.Second, func() bool { return true }, "session")
+			require.Equal(t, tc.want, out.Kind)
+		})
+	}
+}
+
 func TestCodex780TransportErrorsAreUsefulAndRedacted(t *testing.T) {
 	for _, tt := range []struct {
 		err      error
