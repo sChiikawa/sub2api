@@ -161,7 +161,9 @@ func (s *OpenAIGatewayService) startPrefetchGatewayCandy(ctx context.Context, ac
 	if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, headers, account); err != nil {
 		return prefetchCandySkip
 	}
+	applyOpenAICodexProbeHeaders(headers)
 	applyOpenAICodexTicketHarvestIdentity(headers, gatewayCandyModel)
+	account.ApplyHeaderOverrides(headers)
 	if !s.queueGatewayCandyProbe(ctx, headers, account, slot.Host, strings.Join(slot.Cookies, "; ")) {
 		return prefetchCandyBusy
 	}

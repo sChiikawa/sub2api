@@ -3,6 +3,7 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -368,7 +369,11 @@ func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, 
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("session_id", uuid.NewString())
+	sessionID := uuid.NewString()
+	req.Header.Set("session_id", sessionID)
+	if strings.TrimSpace(req.Header.Get("session-id")) == "" {
+		req.Header.Set("session-id", sessionID)
+	}
 	// Never carry a business turn, request size, or compressed/lite body into a probe.
 	for _, name := range []string{responsesLiteHeaderKey, openAICodexTurnStateHeader, "Cookie", "Content-Length", "Content-Encoding", "conversation_id", "x-codex-turn-metadata"} {
 		req.Header.Del(name)
@@ -406,6 +411,9 @@ func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, 
 		out.streamErr = errors.New("probe response incomplete")
 		return out, nil
 	}
+	if decoded, ok := decodeGzipProbeBody(resp.Header.Get("Content-Encoding"), data); ok {
+		data = decoded
+	}
 	if len(data) > openAICodexStateProbeMaxBody {
 		out.streamErr = errors.New("probe response too large")
 		return out, nil
@@ -420,6 +428,23 @@ func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, 
 		out.detail = openAICodexStateDetail(openAICodexStateStreamErrorPayload(data))
 	}
 	return out, nil
+}
+
+func decodeGzipProbeBody(encoding string, data []byte) ([]byte, bool) {
+	gzipped := strings.EqualFold(strings.TrimSpace(encoding), "gzip") || (len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b)
+	if !gzipped {
+		return nil, false
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = reader.Close() }()
+	decoded, err := io.ReadAll(io.LimitReader(reader, openAICodexStateProbeMaxBody+1))
+	if err != nil && len(decoded) == 0 {
+		return nil, false
+	}
+	return decoded, true
 }
 
 // openAICodexStateRouteCookies 只留两枚负载均衡路由 Cookie；门票要搭配它们续接才有意义。

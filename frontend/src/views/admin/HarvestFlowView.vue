@@ -538,7 +538,9 @@ function eventDetail(event: CodexHarvestFlowEvent) {
     const mode = event.result || ''
     const modeKey = mode === 'groups' ? 'modeGroups' : mode === 'model' ? 'modeModel' : mode === 'account' ? 'modeAccount' : ''
     const modeLabel = modeKey ? lookupLabel('admin.astraGateway', modeKey) : ''
-    return [reasonLabel(event.reason), modeLabel].filter(Boolean).join(' · ') || event.detail || resultLabel(event.result)
+    const reason = reasonLabel(event.reason)
+    const extra = event.detail && event.detail !== event.reason && event.detail !== reason ? event.detail : ''
+    return [reason, extra, modeLabel].filter(Boolean).join(' · ') || resultLabel(event.result)
   }
   return event.detail || reasonLabel(event.reason) || resultLabel(event.result)
 }

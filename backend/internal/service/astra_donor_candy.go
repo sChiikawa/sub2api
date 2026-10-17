@@ -175,7 +175,8 @@ func (s *OpenAIGatewayService) checkAstraDonorCandy(ctx context.Context, account
 	if ctx.Err() != nil || !reserve() {
 		return false
 	}
-	reason = s.runAstraCandy(ctx, headers, account.ID, ticket, s.UnifiedAstraTicketsEnabled)
+	var detail string
+	reason, detail = s.runAstraCandy(ctx, headers, account.ID, ticket, s.UnifiedAstraTicketsEnabled)
 	if reason == "candy_disabled" {
 		return false
 	}
@@ -183,7 +184,7 @@ func (s *OpenAIGatewayService) checkAstraDonorCandy(ctx context.Context, account
 	if reason == "candy_passed" {
 		kind = "candy_pass"
 	}
-	recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: account.ID, AccountName: account.Name, Model: ticket.Model, Node: codex780CookieGatewayHost(ticket.HarvestCookies), Reason: reason, Result: "lend_check", Detail: reason})
+	recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: account.ID, AccountName: account.Name, Model: ticket.Model, Node: codex780CookieGatewayHost(ticket.HarvestCookies), Reason: reason, Result: "lend_check", Detail: candyFlowDetail(reason, detail)})
 	s.recordAstraCandyGatewayHistory(account, ticket, reason)
 	return reason == "candy_passed"
 }

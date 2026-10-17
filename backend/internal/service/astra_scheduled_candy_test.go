@@ -81,7 +81,8 @@ func TestScheduledAstraCandyIsObservationOnly(t *testing.T) {
 				}
 				return response, nil
 			}}
-			require.Equal(t, tc.reason, s.runScheduledAstraCandy(t.Context(), h, a.ID, ticket))
+			reason, _ := s.runScheduledAstraCandy(t.Context(), h, a.ID, ticket)
+			require.Equal(t, tc.reason, reason)
 			require.Equal(t, 1, calls)
 			after, _ := json.Marshal(repo.accounts[2])
 			require.Equal(t, string(before), string(after))
