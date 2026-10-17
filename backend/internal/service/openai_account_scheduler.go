@@ -2120,8 +2120,11 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	}) {
 		return false, "shadow_parent_unhealthy"
 	}
-	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
+	if req.RequestedModel != "" && !supportsOpenAIRequestModel(account, req.RequestedModel, req.RequireCompact) {
 		return false, "model_not_supported"
+	}
+	if req.RequestedModel != "" && !pelicanGroupTestModelAllowed(ctx, account, req.RequestedModel) {
+		return false, "model_not_selected_for_pelican"
 	}
 	if req.RequestedModel != "" && !account.IsModelAllowedInGroup(req.GroupID, req.RequestedModel) {
 		return false, "model_not_allowed_in_group"
@@ -2131,7 +2134,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
 		return false, "channel_upstream_restricted"
 	}
-	if !accountSupportsOpenAICapabilitiesForRequest(account, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability) {
+	if !accountSupportsOpenAICapabilitiesForRequest(ctx, account, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability) {
 		return false, "capability_mismatch"
 	}
 	// 分组利润控制：不合格账号在候选过滤与抢槽后终检阶段即被排除，
@@ -2454,6 +2457,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	ctx = WithOpenAIImagesEndpoint(WithOpenAIImageGenerationIntent(ctx))
 	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformOpenAI, false, false)
 	if err == nil && selection != nil && selection.Account != nil {
 		return selection, decision, nil
@@ -2722,7 +2726,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+				if accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 					applyLegacySelectionDecision(&decision, selection)
 					return selection, decision, nil
 				}
@@ -2749,7 +2753,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				return selection, decision, nil
 			}
 			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport, requestedModel) &&
-				accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+				accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 				applyLegacySelectionDecision(&decision, selection)
 				return selection, decision, nil
 			}
@@ -2817,7 +2821,10 @@ func accountSupportsOpenAICapabilities(account *Account, requiredCapability Open
 		account.SupportsOpenAIImageCapability(requiredImageCapability)
 }
 
-func accountSupportsOpenAICapabilitiesForRequest(account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+func accountSupportsOpenAICapabilitiesForRequest(ctx context.Context, account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+	if openAIImageRequestRejection(ctx, account, requestedModel) != "" {
+		return false
+	}
 	if account != nil && requiredImageCapability == "" && account.IsExcelBPSEnabledForModel(requestedModel) {
 		switch requiredCapability {
 		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityResponsesCompact:

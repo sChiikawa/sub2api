@@ -273,6 +273,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexClientVersion               *string   `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool     `json:"openai_codex_version_auto_sync_enabled"`
 	OpenAIRequestTimezoneEnabled           *bool     `json:"openai_request_timezone_enabled"`
+	OpenAIRequestTimezoneAuto              *bool     `json:"openai_request_timezone_auto"`
 	OpenAICodexTicketEnabled               *bool     `json:"openai_codex_ticket_enabled"`
 	OpenAICodexTicketHarvestProxyURL       string    `json:"openai_codex_ticket_harvest_proxy_url"`
 	OpenAICodexTicketUseSavedStaticProxy   bool      `json:"openai_codex_ticket_use_saved_static_proxy"`
@@ -2048,6 +2049,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIRequestTimezoneEnabled
 		}(),
+		OpenAIRequestTimezoneAuto: func() bool {
+			if req.OpenAIRequestTimezoneAuto != nil {
+				return *req.OpenAIRequestTimezoneAuto
+			}
+			return previousSettings.OpenAIRequestTimezoneAuto
+		}(),
 		OpenAICodexTicketEnabled: func() bool {
 			if req.OpenAICodexTicketEnabled != nil {
 				return *req.OpenAICodexTicketEnabled
@@ -2742,6 +2749,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
 		OpenAIRequestTimezoneEnabled:                           updatedSettings.OpenAIRequestTimezoneEnabled,
+		OpenAIRequestTimezoneAuto:                              updatedSettings.OpenAIRequestTimezoneAuto,
 		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
 		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
 		OpenAICodexTicketStaticProxyURL:                        service.MaskProxyURL(updatedSettings.OpenAICodexTicketStaticProxyURL),
