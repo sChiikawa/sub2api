@@ -1059,6 +1059,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			responseCreateAt := time.Time{}
 			acceptedTurn := false
 			if isResponseCreate {
+				// Match native ingress: check the original employee frame before
+				// compatibility or account identity normalization changes metadata.
+				if hooks != nil && hooks.BeforePayloadParse != nil {
+					turn := max(2, int(completedTurns.Load())+1)
+					model := usageMeta.requestModelForFrame(payload)
+					if model == "" {
+						model = capturedSessionModel
+					}
+					if err := hooks.BeforePayloadParse(turn, payload, model); err != nil {
+						return payload, nil, err
+					}
+				}
 				responseCreateAt = time.Now()
 				if !turnLifecycle.beginResponseCreate(clientFrameConn.markTurnStarted) {
 					err := errors.New("overlapping response.create is not supported")
