@@ -791,6 +791,7 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  group_ids?: number[]
 }
 
 export interface ApiKeyConcurrencySnapshot {
@@ -817,6 +818,7 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  group_ids?: number[]
 }
 
 export interface UpdateApiKeyRequest {
@@ -833,6 +835,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  group_ids?: number[]
 }
 
 export interface CreateGroupRequest {
@@ -1123,7 +1126,7 @@ export interface TempUnschedulableStatus {
 
 export interface UpstreamBillingData {
   object: 'sub2api.key_billing' | 'new_api.group_billing'
-  schema_version: 1
+  schema_version: 1 | 2
   billing_scope: 'token' | 'group'
   provider?: 'new_api'
   group?: string
@@ -1139,6 +1142,15 @@ export interface UpstreamBillingData {
   effective_rate_multiplier?: number
   timezone?: string
   observed_at: string
+  billing_mode?: 'multi_group'
+  min_rate_multiplier?: number
+  max_rate_multiplier?: number
+  groups?: Array<UpstreamBillingData & {
+    group_id: number
+    group_name: string
+    platform: string
+    status: 'active' | 'inactive'
+  }>
 }
 
 export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
