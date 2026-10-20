@@ -1084,7 +1084,8 @@ func TestAPIContracts(t *testing.T) {
 					"allow_user_view_error_requests": false,
 					"usage_show_long_context_badge": true,
 					"usage_show_cache_rate": true,
-					"usage_show_cache_rate_to_users": false
+					"usage_show_cache_rate_to_users": false,
+					"usage_show_upstream_response_model_to_users": false
 				}
 			}`,
 		},
@@ -1494,7 +1495,8 @@ func TestAPIContracts(t *testing.T) {
 					"allow_user_view_error_requests": false,
 					"usage_show_long_context_badge": true,
 					"usage_show_cache_rate": true,
-					"usage_show_cache_rate_to_users": false
+					"usage_show_cache_rate_to_users": false,
+					"usage_show_upstream_response_model_to_users": false
 				}
 			}`,
 		},

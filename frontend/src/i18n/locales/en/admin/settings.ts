@@ -1,5 +1,8 @@
+import ipRisk from './ipRisk'
+
 export default {
     settings: {
+      ipRisk,
       title: 'System Settings',
       description: 'Manage registration, email verification, default values, and SMTP settings',
       tabs: {
@@ -1405,6 +1408,10 @@ export default {
       cache_rate_to_users: {
         label: 'Show cache rate to users',
         description: 'When enabled, users can see the per-request cache rate on their own usage page. Off by default, so only admins see it.',
+      },
+      upstream_response_model_to_users: {
+        label: 'Show users the actual upstream response model',
+        description: 'When enabled, users can see the model declared by the upstream response on their usage records. Off by default, so only admins see it. Billing is unchanged, and mapped request models and account details stay hidden.',
       },
       saveSettings: 'Save Settings',
       saving: 'Saving...',

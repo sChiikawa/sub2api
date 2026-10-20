@@ -1441,6 +1441,7 @@
 
         <!-- Tab: Security — Registration, Turnstile, LinuxDo -->
         <div v-show="activeTab === 'security'" class="space-y-6">
+          <IPRiskSettings />
           <!-- Registration Settings -->
           <div class="card">
             <div
@@ -6493,6 +6494,25 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.upstream_response_model_to_users.label') }}
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.upstream_response_model_to_users.description') }}
+                </p>
+              </div>
+              <label class="toggle">
+                <input
+                  v-model="form.usage_show_upstream_response_model_to_users"
+                  data-testid="usage-show-upstream-response-model-to-users"
+                  type="checkbox"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
         </div>
         </div>
@@ -9440,6 +9460,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import ServerlessSettings from "@/components/settings/ServerlessSettings.vue";
+import IPRiskSettings from "@/features/ip-risk/IPRiskSettings.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import RechargeBonusTierEditor from "@/components/admin/settings/RechargeBonusTierEditor.vue";
 import {
@@ -10486,6 +10507,7 @@ const form = reactive<SettingsForm>({
   usage_show_long_context_badge: true,
   usage_show_cache_rate: true,
   usage_show_cache_rate_to_users: false,
+  usage_show_upstream_response_model_to_users: false,
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
@@ -12306,6 +12328,7 @@ async function saveSettings() {
       usage_show_long_context_badge: form.usage_show_long_context_badge,
       usage_show_cache_rate: form.usage_show_cache_rate,
       usage_show_cache_rate_to_users: form.usage_show_cache_rate_to_users,
+      usage_show_upstream_response_model_to_users: form.usage_show_upstream_response_model_to_users,
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,
