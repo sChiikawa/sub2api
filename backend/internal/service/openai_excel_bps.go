@@ -819,8 +819,14 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				if err != nil {
 					return fail(http.StatusBadGateway, "basispoints_usage_invalid", "Excel BPS usage could not be normalized")
 				}
-				line = "data: " + string(payload)
 			}
+			if account.IsExcelBPSEnabled() {
+				payload, err = excelBPSApplySimulatedCacheUsage(payload, excelBPSMissedCacheReadTokens(result.RequestID, result.Usage, cacheCreationAsInput))
+				if err != nil {
+					return fail(http.StatusBadGateway, "basispoints_usage_invalid", "Excel BPS usage could not be normalized")
+				}
+			}
+			line = "data: " + string(payload)
 			if result.FirstTokenMs == nil && (kind == "response.output_text.delta" || kind == "response.output_item.added") {
 				ms := int(time.Since(start).Milliseconds())
 				result.FirstTokenMs = &ms

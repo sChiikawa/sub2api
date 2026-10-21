@@ -115,6 +115,59 @@ func TestExcelBPSCacheCreationAsInputEveryStreamUsage(t *testing.T) {
 	}
 }
 
+func TestExcelBPSMissedCacheVisibleInResponse(t *testing.T) {
+	usage := `{"input_tokens":10000,"output_tokens":50,"input_tokens_details":{"cached_tokens":0,"image_tokens":400}}`
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			wire := `data: {"type":"response.completed","usage":` + usage + `,"response":{"id":"resp_bps_cache","status":"completed","model":"gpt-6-astra","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":` + usage + `}}` + "\n\n"
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}, "x-request-id": {"req-bps-cache"}}, Body: io.NopCloser(strings.NewReader(wire))}}
+			svc := openAIClientToolsTestService(upstream)
+			body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":"show the cache"}`, stream))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			result, err := svc.Forward(context.Background(), c, excelAccount(), body)
+			require.NoError(t, err)
+			require.Equal(t, "req-bps-cache", result.RequestID)
+			require.Equal(t, 10000, result.Usage.InputTokens)
+			require.Zero(t, result.Usage.CacheReadInputTokens)
+			want := excelBPSMissedCacheReadTokens(result.RequestID, result.Usage, false)
+			require.GreaterOrEqual(t, want, 9600*9501/10000)
+			require.LessOrEqual(t, want, 9600*9599/10000)
+			response := rec.Body.Bytes()
+			if stream {
+				for _, line := range strings.Split(rec.Body.String(), "\n") {
+					if strings.HasPrefix(line, "data: ") {
+						response = []byte(strings.TrimPrefix(line, "data: "))
+					}
+				}
+				for _, path := range []string{"usage", "response.usage"} {
+					require.EqualValues(t, want, gjson.GetBytes(response, path+".input_tokens_details.cached_tokens").Int(), path)
+					require.EqualValues(t, want, gjson.GetBytes(response, path+".prompt_tokens_details.cached_tokens").Int(), path)
+					require.EqualValues(t, 10000, gjson.GetBytes(response, path+".input_tokens").Int(), path)
+					require.EqualValues(t, 400, gjson.GetBytes(response, path+".input_tokens_details.image_tokens").Int(), path)
+				}
+			}
+			downstream, ok := extractOpenAIUsageFromJSONBytes(response)
+			require.True(t, ok)
+			require.Equal(t, want, downstream.CacheReadInputTokens)
+			require.Equal(t, 10000, downstream.InputTokens)
+		})
+	}
+}
+
+func TestExcelBPSApplySimulatedCacheUsageLeavesRealCacheAndDeltas(t *testing.T) {
+	delta := `{"type":"response.output_text.delta","delta":"cache"}`
+	got, err := excelBPSApplySimulatedCacheUsage([]byte(delta), 95)
+	require.NoError(t, err)
+	require.Equal(t, delta, string(got))
+	real := `{"response":{"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":2}}}}`
+	got, err = excelBPSApplySimulatedCacheUsage([]byte(real), 95)
+	require.NoError(t, err)
+	require.Equal(t, real, string(got))
+	require.Zero(t, excelBPSMissedCacheReadTokens("req", OpenAIUsage{InputTokens: 1000, CacheReadInputTokens: 40}, false))
+}
+
 func TestExcelBPSDownstreamUsagePreservesUnrelatedPayloads(t *testing.T) {
 	for _, payload := range []string{
 		`{"type":"response.output_text.delta","delta":"cache_write_tokens"}`,
