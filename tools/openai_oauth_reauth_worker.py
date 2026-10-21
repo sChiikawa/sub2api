@@ -1098,6 +1098,33 @@ def process_session_studio_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
                 task_id, account_id, (time.monotonic() - started) * 1000)
 
 
+def _siwc_password_failure(output: str, exit_code: int) -> str:
+    # Report only fixed labels: the runner can echo URLs, passwords and tokens.
+    stage = "starting"
+    for marker, label in (("[1/5]", "authorize"), ("Password accepted", "password_accepted"),
+                          ("TOTP 2FA challenge reached", "mfa_challenge"),
+                          ("2FA verification accepted", "mfa_accepted")):
+        if marker in output:
+            stage = label
+    reason = "protocol_error"
+    for markers, label in (
+        (("Password was rejected",), "password_rejected"),
+        (("2FA key was rejected", "configured 2FA key was rejected", "2FA code was rejected"), "totp_rejected"),
+        (("SIWC_WORKSPACE_MISMATCH",), "workspace_mismatch"),
+        (("SIWC_AUTH_URL_INVALID",), "invalid_auth_url"),
+        (("SIWC_CALLBACK_INVALID",), "invalid_callback"),
+        (("PROXY_RISK_CONTROL", "security-check"), "security_check"),
+        (("ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "fetch failed"), "transport_error"),
+        (("ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "ENOENT", "SyntaxError", "ReferenceError"), "runtime_error"),
+        (("SIWC_INTERACTION_REQUIRED",), "browser_interaction_required"),
+    ):
+        if any(marker in output for marker in markers):
+            reason = label
+            break
+    guidance = "; use browser authorization in account edit" if reason == "browser_interaction_required" else ""
+    return f"SIWC authorization failed (stage={stage}, reason={reason}, exit={exit_code}); credentials retained{guidance}"
+
+
 def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     oauth_profile = str(claim.get("oauth_profile") or "codex")
     if oauth_profile not in {"codex", "excel", "siwc"}:
@@ -1210,9 +1237,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
             api.private_protocol_diagnostics(result.stdout, result.stderr)
         if result.returncode != 0:
             if oauth_profile == "siwc":
-                if "SIWC_INTERACTION_REQUIRED" in result.stdout + result.stderr:
-                    raise WorkerError("SIWC requires browser consent or additional verification; use browser authorization in account edit")
-                raise WorkerError("SIWC password/TOTP authorization failed; credentials retained")
+                raise WorkerError(_siwc_password_failure(result.stdout + "\n" + result.stderr, result.returncode))
             # The external runner may echo unlabeled secrets that regexes cannot redact.
             if oauth_profile == "excel":
                 private_output = result.stdout + "\n" + result.stderr
