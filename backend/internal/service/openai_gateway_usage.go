@@ -199,15 +199,32 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if actualInputTokens < 0 {
 		actualInputTokens = 0
 	}
+	imageInputTokens := max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0)
+	cacheReadTokens := result.Usage.CacheReadInputTokens
+	// BPS prompt cache lives upstream. When that usage reports no cache read,
+	// bill 95.01%–95.99% of the remaining text input at the cache-read rate.
+	// The token count is an integer. Image input and a real upstream cache
+	// read stay on their original prices.
+	if account.IsExcelBPSEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses" && cacheReadTokens == 0 {
+		textFresh := actualInputTokens - imageInputTokens
+		if textFresh > 0 {
+			simulated := excelBPSSimulatedCacheReadTokens(result.RequestID, textFresh)
+			if simulated > textFresh {
+				simulated = textFresh
+			}
+			actualInputTokens -= simulated
+			cacheReadTokens = simulated
+		}
+	}
 
 	// Calculate cost
 	tokens := UsageTokens{
 		InputTokens:          actualInputTokens,
-		ImageInputTokens:     max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageInputTokens:     imageInputTokens,
 		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
 		OutputTokens:         result.Usage.OutputTokens,
 		CacheCreationTokens:  cacheCreationTokens,
-		CacheReadTokens:      result.Usage.CacheReadInputTokens,
+		CacheReadTokens:      cacheReadTokens,
 		ImageOutputTokens:    result.Usage.ImageOutputTokens,
 	}
 
@@ -425,7 +442,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		InputTokens:              actualInputTokens,
 		OutputTokens:             result.Usage.OutputTokens,
 		CacheCreationTokens:      cacheCreationTokens,
-		CacheReadTokens:          result.Usage.CacheReadInputTokens,
+		CacheReadTokens:          cacheReadTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,
 		ImageCount:               result.ImageCount,

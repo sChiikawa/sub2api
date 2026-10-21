@@ -1,6 +1,9 @@
 package service
 
 import (
+	"encoding/binary"
+	"hash/fnv"
+
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -42,4 +45,24 @@ func excelBPSDownstreamUsage(payload []byte) ([]byte, error) {
 		}
 	}
 	return payload, nil
+}
+
+// excelBPSSimulatedCacheReadTokens is the cache-read share billed when BPS
+// reports no cached input. The share is a decimal ratio from 95.01% to 95.99%
+// and stays stable for the same request id and token count. The returned token
+// count is the integer part of that product; fractional tokens are dropped.
+// The usage object forwarded to the client is left unchanged.
+func excelBPSSimulatedCacheReadTokens(requestID string, textTokens int) int {
+	if textTokens <= 0 {
+		return 0
+	}
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(requestID))
+	_, _ = hasher.Write([]byte{0})
+	var count [8]byte
+	binary.LittleEndian.PutUint64(count[:], uint64(textTokens))
+	_, _ = hasher.Write(count[:])
+	// 9501..9599 is 95.01%..95.99% in hundredths of a percent.
+	hundredths := 9501 + int(hasher.Sum32()%99)
+	return textTokens * hundredths / 10000
 }

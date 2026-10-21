@@ -139,6 +139,38 @@ func TestExcelBPSCacheCreationAsInputBilling(t *testing.T) {
 	}
 }
 
+func TestExcelBPSMissedCacheBillsMostInputAsCacheRead(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-6-astra": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6,
+			CacheReadInputTokenCost: 0.5e-6,
+		},
+	}})
+	original := OpenAIUsage{InputTokens: 10000, OutputTokens: 50, ImageInputTokens: 400}
+	result := &OpenAIForwardResult{RequestID: "resp_bps_miss", UpstreamEndpoint: "/basispoints/api/responses", Usage: original, Model: "gpt-6-astra", Duration: time.Second}
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: result, APIKey: &APIKey{ID: 1001}, User: &User{ID: 2001},
+		Account: &Account{ID: 3001, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}},
+	}))
+	require.Equal(t, original, result.Usage)
+	simulated := excelBPSSimulatedCacheReadTokens(result.RequestID, 9600)
+	require.GreaterOrEqual(t, simulated, 9600*95/100)
+	require.LessOrEqual(t, simulated, 9600*96/100)
+	require.Equal(t, 10000-simulated, usageRepo.lastLog.InputTokens)
+	require.Equal(t, simulated, usageRepo.lastLog.CacheReadTokens)
+	require.Equal(t, 400, usageRepo.lastLog.ImageInputTokens)
+	require.Equal(t, 10500, usageRepo.lastLog.TotalTokens())
+	wantReadCost := float64(simulated) * 0.5e-6
+	require.InDelta(t, float64(9600-simulated)*5e-6, usageRepo.lastLog.InputCost, 1e-9)
+	require.InDelta(t, float64(400)*5e-6, usageRepo.lastLog.ImageInputCost, 1e-9)
+	require.InDelta(t, wantReadCost, usageRepo.lastLog.CacheReadCost, 1e-9)
+	require.Equal(t, simulated, billingRepo.lastCmd.CacheReadTokens)
+	require.Equal(t, 10000-simulated, billingRepo.lastCmd.InputTokens)
+}
+
 func TestExcelBPSSelectedModelBillingPreservesCodexCacheCreation(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{}
