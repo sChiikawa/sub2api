@@ -1141,7 +1141,10 @@ func TestContentModerationCheck_PreBlockBlocksCodexResponsesLatestUserInput(t *t
 	require.True(t, logs[0].Flagged)
 	require.Equal(t, ContentModerationActionBlock, logs[0].Action)
 	require.Equal(t, ContentModerationModePreBlock, logs[0].Mode)
-	require.Equal(t, "latest blocked prompt", logs[0].InputExcerpt)
+	require.Contains(t, logs[0].InputExcerpt, "instructions:\ninstructions.....")
+	require.Contains(t, logs[0].InputExcerpt, "developer:\ndeveloper instructions should not be audited")
+	require.Contains(t, logs[0].InputExcerpt, "user:\nenvironment context")
+	require.Contains(t, logs[0].InputExcerpt, "user:\nlatest blocked prompt")
 	require.Equal(t, "latest blocked prompt", moderationRequest.Input)
 }
 

@@ -168,9 +168,11 @@ func TestExtractContentModerationInput_ResponsesAgentToolLoopSkipsAudit(t *testi
 
 func TestExtractContentModerationConversation_IncludesDialogue(t *testing.T) {
 	body := []byte(`{
+		"instructions":"Follow the policy",
 		"input":[
 			{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden instructions"}]},
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"first question"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"<system-reminder>keep this</system-reminder>"}]},
 			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first answer"}]},
 			{"type":"function_call","call_id":"call_1","name":"run_tests","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_1","output":"tool output"},
@@ -183,7 +185,12 @@ func TestExtractContentModerationConversation_IncludesDialogue(t *testing.T) {
 	require.Contains(t, transcript, "assistant:\nfirst answer")
 	require.Contains(t, transcript, strings.Repeat("长", 300))
 	require.NotContains(t, transcript, "hidden instructions")
-	require.NotContains(t, transcript, "tool output")
+	blocked := ExtractContentModerationBlockConversation(ContentModerationProtocolOpenAIResponses, body)
+	require.Contains(t, blocked, "instructions:\nFollow the policy")
+	require.Contains(t, blocked, "developer:\nhidden instructions")
+	require.Contains(t, blocked, "user:\nfirst question")
+	require.Contains(t, blocked, "<system-reminder>keep this</system-reminder>")
+	require.NotContains(t, blocked, "tool output")
 	require.Equal(t, strings.Repeat("长", 300), ExtractContentModerationText(ContentModerationProtocolOpenAIResponses, body))
 
 	longTurn := "user:\n" + strings.Repeat("问", maxModerationConversationExcerptRunes)

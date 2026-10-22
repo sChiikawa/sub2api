@@ -5163,6 +5163,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 		IdentityInherited: identity.Inherited,
 	}
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
+	requestBody := append([]byte(nil), cyberBlockBody...)
 	if gwSvc != nil && apiKey != nil && !cyberLogOnly {
 		if identity.BlockKey != "" {
 			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -5190,6 +5191,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 				UpstreamStatus:  mark.UpstreamStatus,
 				UpstreamInTok:   mark.UpstreamInTok,
 				UpstreamOutTok:  mark.UpstreamOutTok,
+				RequestBody:     requestBody,
 			})
 		}
 		if forwardErrored && gwSvc != nil {

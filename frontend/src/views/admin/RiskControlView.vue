@@ -1143,6 +1143,10 @@
               </span>
             </div>
             <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50">{{ inputDetailText }}</pre>
+            <pre
+              v-if="inputDetailRow.input_excerpt && inputDetailRow.error"
+              class="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-300 shadow-inner dark:bg-black/50"
+            >{{ inputDetailRow.error }}</pre>
           </div>
         </div>
 

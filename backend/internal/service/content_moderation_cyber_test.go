@@ -157,6 +157,38 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 		"Error should mention flagged or cyber_policy")
 }
 
+func TestRecordCyberPolicyEvent_StoresConversationExcerpt(t *testing.T) {
+	repo := &contentModerationTestRepo{}
+	svc := NewContentModerationService(
+		&contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyRiskControlEnabled: "true",
+		}},
+		repo, nil, nil, nil, nil, nil, nil,
+	)
+	body := []byte(`{"input":[
+		{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden instructions"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"earlier question"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"earlier answer"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest question"}]}
+	]}`)
+	svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
+		UserID:          1,
+		UserEmail:       "u@x.com",
+		Model:           "gpt-5",
+		Endpoint:        "/v1/responses",
+		UpstreamMessage: "flagged",
+		UpstreamBody:    `{"error":{"code":"cyber_policy"}}`,
+		RequestBody:     body,
+	})
+	logs := repo.snapshotLogs()
+	require.Len(t, logs, 1)
+	require.Contains(t, logs[0].InputExcerpt, "user:\nearlier question")
+	require.Contains(t, logs[0].InputExcerpt, "assistant:\nearlier answer")
+	require.Contains(t, logs[0].InputExcerpt, "user:\nlatest question")
+	require.Contains(t, logs[0].InputExcerpt, "developer:\nhidden instructions")
+	require.Contains(t, logs[0].Error, "cyber_policy")
+}
+
 func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
 	groupID := int64(7)
 	tests := []struct {

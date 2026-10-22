@@ -375,7 +375,19 @@ func (in ContentModerationInput) ExcerptText() string {
 // contentModerationLogExcerpt is the investigation transcript stored on an
 // audit record. Semantic checks still use only the current user turn.
 func contentModerationLogExcerpt(protocol string, body []byte, fallback string) string {
-	if text := ExtractContentModerationConversation(protocol, body); text != "" {
+	return moderationConversationExcerpt(protocol, body, fallback, false)
+}
+
+func contentModerationBlockExcerpt(protocol string, body []byte, fallback string) string {
+	return moderationConversationExcerpt(protocol, body, fallback, true)
+}
+
+func moderationConversationExcerpt(protocol string, body []byte, fallback string, includeSystem bool) string {
+	text := ExtractContentModerationConversation(protocol, body)
+	if includeSystem {
+		text = ExtractContentModerationBlockConversation(protocol, body)
+	}
+	if text != "" {
 		return text
 	}
 	return fallback
@@ -960,7 +972,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 					"keyword_blocking_mode", cfg.KeywordBlockingMode,
 					"keyword", keyword)
 				scores := map[string]float64{contentModerationKeywordCategory: 1.0}
-				log := s.buildLog(input, cfg, ContentModerationActionKeywordBlock, true, contentModerationKeywordCategory, 1.0, scores, contentModerationLogExcerpt(input.Protocol, input.Body, keywordText), nil, nil, "")
+				log := s.buildLog(input, cfg, ContentModerationActionKeywordBlock, true, contentModerationKeywordCategory, 1.0, scores, contentModerationBlockExcerpt(input.Protocol, input.Body, keywordText), nil, nil, "")
 				log.MatchedKeyword = keyword
 				s.enqueueRecord(input, cfg, log, (ContentModerationInput{Text: keywordText}).Hash(), false, true)
 				return &ContentModerationDecision{
@@ -1033,7 +1045,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 				message = fmt.Sprintf("%s（hash: %s）", message, hashText)
 			}
 			scores := map[string]float64{"hash": 1.0}
-			log := s.buildLog(input, cfg, ContentModerationActionHashBlock, true, "hash", 1.0, scores, contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText()), nil, nil, "")
+			log := s.buildLog(input, cfg, ContentModerationActionHashBlock, true, "hash", 1.0, scores, contentModerationBlockExcerpt(input.Protocol, input.Body, content.ExcerptText()), nil, nil, "")
 			s.enqueueRecord(input, cfg, log, hashText, false, false)
 			return &ContentModerationDecision{
 				Allowed:    false,
@@ -1149,8 +1161,12 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		"highest_score", highestScore,
 		"latency_ms", latency,
 		"queue_delay_ms", queueDelay)
+	excerpt := contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText())
+	if action == ContentModerationActionBlock {
+		excerpt = contentModerationBlockExcerpt(input.Protocol, input.Body, content.ExcerptText())
+	}
 	if flagged || cfg.RecordNonHits {
-		log := s.buildLog(input, cfg, action, flagged, highestCategory, highestScore, result.CategoryScores, contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText()), &latency, queueDelay, "")
+		log := s.buildLog(input, cfg, action, flagged, highestCategory, highestScore, result.CategoryScores, excerpt, &latency, queueDelay, "")
 		log.EngineMeta = result.EngineMeta
 		if queueDelay == nil && cfg.Mode == ContentModerationModePreBlock {
 			s.enqueueRecord(input, cfg, log, hashText, flagged, flagged)
@@ -3081,6 +3097,9 @@ type CyberPolicyRecordInput struct {
 	UpstreamStatus  int
 	UpstreamInTok   int
 	UpstreamOutTok  int
+	// RequestBody is the client request captured when cyber_policy fired.
+	// The audit log keeps its user/assistant dialogue in InputExcerpt.
+	RequestBody []byte
 }
 
 // RecordCyberPolicyEvent 把一次 cyber_policy 硬阻断写入风控中心日志、计入违规计数、
@@ -3135,6 +3154,7 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		Flagged:         true,
 		HighestCategory: "cyber_policy",
 		HighestScore:    1.0,
+		InputExcerpt:    trimConversationExcerpt(redactContentModerationSecrets(ExtractContentModerationBlockConversation("", in.RequestBody))),
 		Error:           trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
 		CreatedAt:       time.Now(),
 	}
