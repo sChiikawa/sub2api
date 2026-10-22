@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -163,6 +164,33 @@ func TestExtractContentModerationInput_ResponsesAgentToolLoopSkipsAudit(t *testi
 
 	require.Empty(t, input.Text)
 	require.Empty(t, input.Images)
+}
+
+func TestExtractContentModerationConversation_IncludesDialogue(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden instructions"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"first question"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first answer"}]},
+			{"type":"function_call","call_id":"call_1","name":"run_tests","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":"tool output"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("长", 300) + `"}]}
+		]
+	}`)
+
+	transcript := ExtractContentModerationConversation(ContentModerationProtocolOpenAIResponses, body)
+	require.Contains(t, transcript, "user:\nfirst question")
+	require.Contains(t, transcript, "assistant:\nfirst answer")
+	require.Contains(t, transcript, strings.Repeat("长", 300))
+	require.NotContains(t, transcript, "hidden instructions")
+	require.NotContains(t, transcript, "tool output")
+	require.Equal(t, strings.Repeat("长", 300), ExtractContentModerationText(ContentModerationProtocolOpenAIResponses, body))
+
+	longTurn := "user:\n" + strings.Repeat("问", maxModerationConversationExcerptRunes)
+	excerpt := trimConversationExcerpt(longTurn)
+	require.LessOrEqual(t, len([]rune(excerpt)), maxModerationConversationExcerptRunes)
+	require.Contains(t, excerpt, "…")
+	require.Contains(t, excerpt, "问")
 }
 
 func TestExtractContentModerationInput_ResponsesLastUserMessageExtracted(t *testing.T) {

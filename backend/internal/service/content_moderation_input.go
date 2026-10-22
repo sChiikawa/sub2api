@@ -13,6 +13,191 @@ func ExtractContentModerationText(protocol string, body []byte) string {
 	return ExtractContentModerationInput(protocol, body).Text
 }
 
+// ExtractContentModerationConversation returns the user and assistant turns in
+// order so an audit record can be read as the dialogue. System, developer and
+// tool payloads are omitted. Semantic moderation does not use this text.
+func ExtractContentModerationConversation(protocol string, body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	var turns []conversationTurn
+	switch protocol {
+	case ContentModerationProtocolAnthropicMessages:
+		collectMessageConversation(gjson.GetBytes(body, "messages"), &turns)
+	case ContentModerationProtocolOpenAIChat:
+		collectMessageConversation(gjson.GetBytes(body, "messages"), &turns)
+	case ContentModerationProtocolOpenAIResponses:
+		collectResponsesConversation(gjson.GetBytes(body, "input"), &turns)
+	case ContentModerationProtocolGemini:
+		collectGeminiConversation(gjson.GetBytes(body, "contents"), &turns)
+	case ContentModerationProtocolOpenAIImages:
+		appendConversationTurn(&turns, "user", gjson.GetBytes(body, "prompt").String())
+	case ContentModerationProtocolTypeSafeSystemOne:
+		return ""
+	default:
+		collectResponsesConversation(gjson.GetBytes(body, "input"), &turns)
+		if len(turns) == 0 {
+			collectMessageConversation(gjson.GetBytes(body, "messages"), &turns)
+		}
+		if len(turns) == 0 {
+			collectGeminiConversation(gjson.GetBytes(body, "contents"), &turns)
+		}
+	}
+	return formatConversationTurns(turns)
+}
+
+type conversationTurn struct {
+	role string
+	text string
+}
+
+func collectMessageConversation(messages gjson.Result, turns *[]conversationTurn) {
+	if !messages.IsArray() {
+		return
+	}
+	messages.ForEach(func(_, message gjson.Result) bool {
+		role, ok := conversationRole(message.Get("role").String())
+		if !ok {
+			return true
+		}
+		appendConversationTurn(turns, role, conversationItemText(message))
+		return true
+	})
+}
+
+func collectResponsesConversation(input gjson.Result, turns *[]conversationTurn) {
+	switch {
+	case !input.Exists():
+		return
+	case input.Type == gjson.String:
+		appendConversationTurn(turns, "user", input.String())
+	case input.IsArray():
+		input.ForEach(func(_, item gjson.Result) bool {
+			collectResponsesConversationItem(item, turns)
+			return true
+		})
+	case input.IsObject():
+		collectResponsesConversationItem(input, turns)
+	}
+}
+
+func collectResponsesConversationItem(item gjson.Result, turns *[]conversationTurn) {
+	role, ok := conversationRole(item.Get("role").String())
+	if !ok {
+		if strings.TrimSpace(item.Get("role").String()) != "" {
+			return
+		}
+		typ := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+		if typ != "" && typ != "message" && typ != "input_text" && typ != "text" {
+			return
+		}
+		if conversationItemText(item) == "" {
+			return
+		}
+		role = "user"
+	}
+	appendConversationTurn(turns, role, conversationItemText(item))
+}
+
+func collectGeminiConversation(contents gjson.Result, turns *[]conversationTurn) {
+	if !contents.IsArray() {
+		return
+	}
+	contents.ForEach(func(_, content gjson.Result) bool {
+		role, ok := conversationRole(content.Get("role").String())
+		if !ok {
+			return true
+		}
+		var parts []string
+		if arr := content.Get("parts"); arr.IsArray() {
+			arr.ForEach(func(_, part gjson.Result) bool {
+				appendConversationPiece(&parts, part.Get("text").String())
+				return true
+			})
+		}
+		appendConversationTurn(turns, role, strings.Join(parts, "\n"))
+		return true
+	})
+}
+
+func conversationRole(role string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "user":
+		return "user", true
+	case "assistant", "model":
+		return "assistant", true
+	default:
+		return "", false
+	}
+}
+
+func conversationItemText(item gjson.Result) string {
+	var parts []string
+	if content := item.Get("content"); content.Exists() {
+		collectConversationText(content, &parts)
+	} else {
+		collectConversationText(item, &parts)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func collectConversationText(value gjson.Result, parts *[]string) {
+	switch {
+	case !value.Exists():
+		return
+	case value.Type == gjson.String:
+		appendConversationPiece(parts, value.String())
+	case value.IsArray():
+		value.ForEach(func(_, item gjson.Result) bool {
+			collectConversationText(item, parts)
+			return true
+		})
+	case value.IsObject():
+		typ := strings.ToLower(strings.TrimSpace(value.Get("type").String()))
+		switch typ {
+		case "", "text", "input_text", "output_text", "message":
+			if value.Get("text").Exists() {
+				appendConversationPiece(parts, value.Get("text").String())
+			}
+			if value.Get("content").Exists() {
+				collectConversationText(value.Get("content"), parts)
+			}
+		}
+	}
+}
+
+func appendConversationPiece(parts *[]string, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.Contains(text, "<system-reminder>") {
+		return
+	}
+	*parts = append(*parts, text)
+}
+
+func appendConversationTurn(turns *[]conversationTurn, role, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	*turns = append(*turns, conversationTurn{role: role, text: text})
+}
+
+func formatConversationTurns(turns []conversationTurn) string {
+	if len(turns) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, turn := range turns {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(turn.role)
+		b.WriteString(":\n")
+		b.WriteString(turn.text)
+	}
+	return b.String()
+}
+
 func ExtractContentModerationInput(protocol string, body []byte) ContentModerationInput {
 	return extractContentModerationInput(protocol, body, true)
 }

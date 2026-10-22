@@ -1070,7 +1070,9 @@ func TestContentModerationCheck_OpenAIResponsesRecordsNonHitForCodexPayload(t *t
 	require.False(t, logs[0].Flagged)
 	require.Equal(t, ContentModerationActionAllow, logs[0].Action)
 	require.Equal(t, "/responses", logs[0].Endpoint)
-	require.Equal(t, "last user prompt", logs[0].InputExcerpt)
+	require.Contains(t, logs[0].InputExcerpt, "first user prompt")
+	require.Contains(t, logs[0].InputExcerpt, "last user prompt")
+	require.NotContains(t, logs[0].InputExcerpt, "developer instructions")
 	require.Equal(t, "last user prompt", moderationRequest.Input)
 }
 

@@ -58,12 +58,13 @@ const (
 	ContentModerationProtocolOpenAIImages      = "openai_images"
 	ContentModerationProtocolTypeSafeSystemOne = "typesafe_systemone"
 
-	defaultContentModerationBaseURL   = "https://api.openai.com"
-	defaultContentModerationModel     = "omni-moderation-latest"
-	defaultContentModerationTimeoutMS = 3000
-	maxContentModerationTimeoutMS     = 30000
-	maxModerationInputRunes           = 12000
-	maxModerationExcerptRunes         = 240
+	defaultContentModerationBaseURL       = "https://api.openai.com"
+	defaultContentModerationModel         = "omni-moderation-latest"
+	defaultContentModerationTimeoutMS     = 3000
+	maxContentModerationTimeoutMS         = 30000
+	maxModerationInputRunes               = 12000
+	maxModerationExcerptRunes             = 240
+	maxModerationConversationExcerptRunes = 32000
 
 	defaultContentModerationWorkerCount          = 4
 	maxContentModerationWorkerCount              = 32
@@ -369,6 +370,15 @@ func (in ContentModerationInput) ModerationInput() any {
 
 func (in ContentModerationInput) ExcerptText() string {
 	return in.Text
+}
+
+// contentModerationLogExcerpt is the investigation transcript stored on an
+// audit record. Semantic checks still use only the current user turn.
+func contentModerationLogExcerpt(protocol string, body []byte, fallback string) string {
+	if text := ExtractContentModerationConversation(protocol, body); text != "" {
+		return text
+	}
+	return fallback
 }
 
 func (in ContentModerationInput) Hash() string {
@@ -950,7 +960,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 					"keyword_blocking_mode", cfg.KeywordBlockingMode,
 					"keyword", keyword)
 				scores := map[string]float64{contentModerationKeywordCategory: 1.0}
-				log := s.buildLog(input, cfg, ContentModerationActionKeywordBlock, true, contentModerationKeywordCategory, 1.0, scores, keywordText, nil, nil, "")
+				log := s.buildLog(input, cfg, ContentModerationActionKeywordBlock, true, contentModerationKeywordCategory, 1.0, scores, contentModerationLogExcerpt(input.Protocol, input.Body, keywordText), nil, nil, "")
 				log.MatchedKeyword = keyword
 				s.enqueueRecord(input, cfg, log, (ContentModerationInput{Text: keywordText}).Hash(), false, true)
 				return &ContentModerationDecision{
@@ -1023,7 +1033,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 				message = fmt.Sprintf("%s（hash: %s）", message, hashText)
 			}
 			scores := map[string]float64{"hash": 1.0}
-			log := s.buildLog(input, cfg, ContentModerationActionHashBlock, true, "hash", 1.0, scores, content.ExcerptText(), nil, nil, "")
+			log := s.buildLog(input, cfg, ContentModerationActionHashBlock, true, "hash", 1.0, scores, contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText()), nil, nil, "")
 			s.enqueueRecord(input, cfg, log, hashText, false, false)
 			return &ContentModerationDecision{
 				Allowed:    false,
@@ -1106,7 +1116,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 			s.asyncErrors.Add(1)
 		}
 		if cfg.RecordNonHits {
-			log := s.buildLog(input, cfg, ContentModerationActionError, false, "", 0, nil, content.ExcerptText(), &latency, queueDelay, err.Error())
+			log := s.buildLog(input, cfg, ContentModerationActionError, false, "", 0, nil, contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText()), &latency, queueDelay, err.Error())
 			log.EngineMeta = moderationAttemptMeta(cfg, content)
 			_ = s.repo.CreateLog(ctx, log)
 		}
@@ -1140,7 +1150,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		"latency_ms", latency,
 		"queue_delay_ms", queueDelay)
 	if flagged || cfg.RecordNonHits {
-		log := s.buildLog(input, cfg, action, flagged, highestCategory, highestScore, result.CategoryScores, content.ExcerptText(), &latency, queueDelay, "")
+		log := s.buildLog(input, cfg, action, flagged, highestCategory, highestScore, result.CategoryScores, contentModerationLogExcerpt(input.Protocol, input.Body, content.ExcerptText()), &latency, queueDelay, "")
 		log.EngineMeta = result.EngineMeta
 		if queueDelay == nil && cfg.Mode == ContentModerationModePreBlock {
 			s.enqueueRecord(input, cfg, log, hashText, flagged, flagged)
@@ -1940,7 +1950,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		HighestScore:      highestScore,
 		CategoryScores:    cloneFloatMap(scores),
 		ThresholdSnapshot: cloneFloatMap(cfg.Thresholds),
-		InputExcerpt:      trimRunes(redactContentModerationSecrets(text), maxModerationExcerptRunes),
+		InputExcerpt:      trimConversationExcerpt(redactContentModerationSecrets(text)),
 		UpstreamLatencyMS: latency,
 		QueueDelayMS:      queueDelay,
 		Error:             errText,
@@ -3015,6 +3025,21 @@ func cloneInt64Ptr(in *int64) *int64 {
 	}
 	v := *in
 	return &v
+}
+
+func trimConversationExcerpt(text string) string {
+	runes := []rune(text)
+	limit := maxModerationConversationExcerptRunes
+	if limit <= 0 || len(runes) <= limit {
+		return text
+	}
+	marker := []rune("\n…\n")
+	head := limit / 4
+	tail := limit - head - len(marker)
+	if tail < 1 {
+		return string(runes[len(runes)-limit:])
+	}
+	return string(runes[:head]) + string(marker) + string(runes[len(runes)-tail:])
 }
 
 func trimRunes(text string, max int) string {
