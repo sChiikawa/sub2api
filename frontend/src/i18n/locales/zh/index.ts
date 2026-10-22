@@ -1,3 +1,5 @@
+import ipAudit from './ipAudit'
+import connections from './connections'
 import securityRecords from './securityRecords'
 import siwc from './siwc'
 import priorityScheduling from './priorityScheduling'
@@ -23,6 +25,8 @@ import requestTiming from './requestTiming'
 import autoConfig from './autoConfig'
 
 export default {
+  ipAudit,
+  connections,
   securityRecords,
   siwc,
   autoConfig,
