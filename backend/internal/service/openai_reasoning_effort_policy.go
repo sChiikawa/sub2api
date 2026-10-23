@@ -522,45 +522,72 @@ func ApplyReasoningEffortPolicy(body []byte, maxEffort string, mappings []Reason
 	}
 	result := body
 	changed := false
-	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
-		field := gjson.GetBytes(result, path)
-		if !field.Exists() || field.Type != gjson.String {
-			continue
-		}
-		original := strings.TrimSpace(field.String())
-		if original == "" {
-			continue
-		}
-
-		effective, mapped := mapReasoningEffort(original, mappings, requestModel)
-		if mapped && isReasoningEffortMappingDeny(effective) {
-			requested := normalizeReasoningEffortMappingSource(original)
-			if requested == "" {
-				requested = original
-			}
-			return body, false, &ReasoningEffortMappingDeniedError{Requested: requested}
-		}
-		if currentRank, recognized := reasoningEffortRank(effective); recognized {
-			effective = NormalizeMaxReasoningEffort(effective)
-			if hasMax && currentRank > maxRank {
-				if deny {
-					return body, false, &ReasoningEffortOverLimitError{Requested: effective, Max: canonicalMax}
-				}
-				effective = canonicalMax
-			}
-		}
-		if effective == original {
-			continue
-		}
-
-		updated, err := sjson.SetBytes(result, path, effective)
+	apply := func(path string) error {
+		updated, fieldChanged, err := rewriteReasoningEffort(result, path, maxRank, hasMax, deny, canonicalMax, mappings, requestModel)
 		if err != nil {
-			continue
+			return err
 		}
-		result = updated
-		changed = true
+		if fieldChanged {
+			result = updated
+			changed = true
+		}
+		return nil
+	}
+	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
+		if err := apply(path); err != nil {
+			return body, false, err
+		}
+	}
+	// configuration_update carries a later effort inside the transcript. Cap it
+	// here so folding that item into the request cannot bypass the group ceiling.
+	if input := gjson.GetBytes(result, "input"); input.IsArray() {
+		for index, item := range input.Array() {
+			if item.Get("type").String() != "configuration_update" {
+				continue
+			}
+			if err := apply(fmt.Sprintf("input.%d.reasoning.effort", index)); err != nil {
+				return body, false, err
+			}
+		}
 	}
 	return result, changed, nil
+}
+
+func rewriteReasoningEffort(body []byte, path string, maxRank int, hasMax, deny bool, canonicalMax string, mappings []ReasoningEffortMapping, requestModel string) ([]byte, bool, error) {
+	field := gjson.GetBytes(body, path)
+	if !field.Exists() || field.Type != gjson.String {
+		return body, false, nil
+	}
+	original := strings.TrimSpace(field.String())
+	if original == "" {
+		return body, false, nil
+	}
+
+	effective, mapped := mapReasoningEffort(original, mappings, requestModel)
+	if mapped && isReasoningEffortMappingDeny(effective) {
+		requested := normalizeReasoningEffortMappingSource(original)
+		if requested == "" {
+			requested = original
+		}
+		return body, false, &ReasoningEffortMappingDeniedError{Requested: requested}
+	}
+	if currentRank, recognized := reasoningEffortRank(effective); recognized {
+		effective = NormalizeMaxReasoningEffort(effective)
+		if hasMax && currentRank > maxRank {
+			if deny {
+				return body, false, &ReasoningEffortOverLimitError{Requested: effective, Max: canonicalMax}
+			}
+			effective = canonicalMax
+		}
+	}
+	if effective == original {
+		return body, false, nil
+	}
+	updated, err := sjson.SetBytes(body, path, effective)
+	if err != nil {
+		return body, false, nil
+	}
+	return updated, true, nil
 }
 
 func applyOpenAIWSReasoningEffortPolicy(payload []byte, hooks *OpenAIWSIngressHooks) ([]byte, error) {

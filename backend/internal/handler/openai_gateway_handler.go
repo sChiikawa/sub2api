@@ -4173,6 +4173,11 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
+	if failoverErr.Reason == service.ExcelBPSStreamIdleReason {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "server_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
+		return
+	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 	if statusCode == http.StatusBadRequest && service.IsOpenAICompatibleModelNotFound400(responseBody) && !streamStarted {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -228,6 +229,31 @@ func TestExcelOAuthChatCompletionsHiUsesBPS(t *testing.T) {
 	require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
 	require.NotContains(t, rec.Body.String(), "Upstream request failed")
 	require.Contains(t, rec.Body.String(), "Hi")
+}
+
+func TestExcelOAuthChatStreamIdleSwitchesAccount(t *testing.T) {
+	r, w := io.Pipe()
+	defer func() { _ = w.Close() }()
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: r}}
+	gateway := openAIClientToolsTestService(upstream)
+	gateway.cfg.Gateway.ExcelBPSStreamDataIntervalTimeout = 1
+	account := excelAccount()
+	account.Credentials["client_id"] = openai.ExcelClientID
+	body := []byte(`{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	result, err := gateway.ForwardAsChatCompletions(ctx, c, account, body, "", "")
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.Nil(t, result)
+	require.Equal(t, NextAccountRetry, failover.NextAccountAction)
+	require.Equal(t, ExcelBPSStreamIdleReason, failover.Reason)
+	require.Len(t, upstream.requests, 1)
+	require.NotContains(t, rec.Body.String(), "Upstream stream")
+	require.False(t, IsResponseCommitted(c))
 }
 
 func TestExcelOAuthIsolationPreservesCodexMixedRoute(t *testing.T) {

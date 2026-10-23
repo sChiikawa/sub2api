@@ -341,6 +341,40 @@ func TestIncrementalTextCancellationAndTerminalEOF(t *testing.T) {
 	_ = producer2.Close()
 }
 
+func TestConfigurationUpdateAppliesLatestEffort(t *testing.T) {
+	source := testSource()
+	source["input"] = []any{
+		message("user", "hello"),
+		object{"type": "configuration_update", "reasoning": object{"effort": "low"}},
+		message("user", "continue"),
+		object{"type": "configuration_update"},
+		object{"type": "configuration_update", "reasoning": object{"effort": "max"}},
+	}
+	out, bridge := mustPrepare(t, source, "", nil)
+	if out["reasoning_effort"] != "xhigh" || bridge.RequestedEffort != "max" || bridge.Effort != "xhigh" {
+		t.Fatalf("latest configuration effort was not applied: wire=%v requested=%s effective=%s", out["reasoning_effort"], bridge.RequestedEffort, bridge.Effort)
+	}
+	for _, raw := range mustTestValue[[]any](t, out["input"]) {
+		if text(mustTestValue[object](t, raw)["type"]) == "configuration_update" {
+			t.Fatal("configuration_update was forwarded upstream")
+		}
+	}
+
+	for _, patch := range []object{
+		{"input": []any{message("user", "hello"), object{"type": "configuration_update", "reasoning": object{"effort": "unknown"}}}},
+		{"input": []any{message("user", "hello"), object{"type": "configuration_update", "reasoning": object{"effort": "high", "mode": "pro"}}}},
+	} {
+		rejected := testSource()
+		for k, v := range patch {
+			rejected[k] = v
+		}
+		raw, _ := json.Marshal(rejected)
+		if _, _, err := Prepare(raw, "", nil); err == nil {
+			t.Fatalf("unsupported configuration_update accepted: %+v", patch)
+		}
+	}
+}
+
 func TestLiteCatalogAndCompactionStayOrdered(t *testing.T) {
 	source := testSource()
 	source["input"] = []any{object{"type": "additional_tools", "tools": []any{object{"type": "function", "name": "shell"}}}, object{"type": "compaction_trigger"}, message("user", "hello")}

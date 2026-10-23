@@ -876,8 +876,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	keepalive := func() {
-		if stream && ctx.Err() == nil {
-			_, _ = c.Writer.WriteString(": keepalive\n\n")
+		if stream && ctx.Err() == nil && c != nil && c.Writer != nil {
+			n, _ := c.Writer.WriteString(": keepalive\n\n")
+			recordOpenAIStreamKeepaliveBytes(c, n)
 			c.Writer.Flush()
 		}
 	}
@@ -888,10 +889,23 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	terminalSuccessful := false
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
 	var heldStream []string
+	var semanticWritten bool
+	writeClientLine := func(line string) error {
+		if !stream || c == nil || c.Writer == nil {
+			return nil
+		}
+		n, writeErr := c.Writer.WriteString(line + "\n")
+		if excelBPSDownstreamLineIsSemantic(line) {
+			semanticWritten = true
+		} else {
+			recordOpenAIStreamKeepaliveBytes(c, n)
+		}
+		return writeErr
+	}
 	releaseHeldStream := func() {
 		for _, held := range heldStream {
-			_, _ = c.Writer.WriteString(held + "\n")
-			if held == "" {
+			_ = writeClientLine(held)
+			if held == "" && c != nil && c.Writer != nil {
 				c.Writer.Flush()
 			}
 		}
@@ -981,7 +995,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		if stream {
 			releaseHeldStream()
-			if _, err = c.Writer.WriteString(line + "\n"); err != nil {
+			if err = writeClientLine(line); err != nil {
 				result.ClientDisconnect = true
 				if isExcelBPSClientCancellation(c, c.Request.Context().Err()) {
 					MarkOpsClientCancellation(c, stream)
@@ -1003,6 +1017,15 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			result.ClientDisconnect = true
 			return result, ctx.Err()
+		}
+		// A stall before any semantic SSE can move to another account. Output
+		// already delivered, including a held response that was flushed, is not replayed.
+		if failover := excelBPSIdleFailoverError(c, ctx, err, semanticWritten); failover != nil {
+			if lease != nil {
+				lease.ReportStreamFailure()
+			}
+			recordExcelBPSTransportFailure(ctx, c, account, scope, proxyURL, err, "stream", c.GetInt("excel_bps_upstream_attempt"), false)
+			return nil, failover
 		}
 		// Do not replay an incomplete response. Mark the exit for the next
 		// request only; a client cancellation never penalizes the node.

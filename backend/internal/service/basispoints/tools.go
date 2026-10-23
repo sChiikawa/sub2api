@@ -430,6 +430,30 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	}, nil
 }
 
+// applyConfigurationUpdate keeps the latest reasoning effort from a Codex
+// configuration_update item. BPS has no mid-transcript configuration item, so
+// the caller omits the item after this update.
+func (b *Bridge) applyConfigurationUpdate(item object) error {
+	reasoning, _ := item["reasoning"].(object)
+	if reasoning == nil {
+		return nil
+	}
+	if mode := text(reasoning["mode"]); mode != "" && mode != "standard" {
+		return fmt.Errorf("basispoints does not support reasoning mode %q", mode)
+	}
+	effort := text(reasoning["effort"])
+	if effort == "" {
+		return nil
+	}
+	normalized, err := NormalizeEffort(effort)
+	if err != nil {
+		return err
+	}
+	b.RequestedEffort = effort
+	b.Effort = normalized
+	return nil
+}
+
 func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
@@ -503,7 +527,13 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			item["id"] = itemID
 			toolImages = separateToolImages(item)
 		case "configuration_update":
-			return nil, fmt.Errorf("basispoints does not support configuration_update; start a new request with the desired effort")
+			// Codex replays mid-conversation effort changes as history items.
+			// BPS only accepts effort on the request, so keep the latest value
+			// and omit the item from the upstream transcript.
+			if err := b.applyConfigurationUpdate(item); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if err := b.validateHistoryContent(item["content"], index, "content"); err != nil {
 			return nil, err

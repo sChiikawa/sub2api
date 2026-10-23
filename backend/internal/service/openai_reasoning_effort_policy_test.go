@@ -288,6 +288,8 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 		mappingDeny bool
 	}{
 		{name: "nested caps high", body: `{"reasoning":{"effort":"xhigh"}}`, max: "medium", path: "reasoning.effort", want: "medium", changed: true},
+		{name: "caps configuration update", body: `{"reasoning":{"effort":"low"},"input":[{"type":"message","role":"user","content":"hi"},{"type":"configuration_update","reasoning":{"effort":"xhigh"}}]}`, max: "medium", path: "input.1.reasoning.effort", want: "medium", changed: true},
+		{name: "deny rejects configuration update over ceiling", body: `{"input":[{"type":"configuration_update","reasoning":{"effort":"high"}}]}`, max: "low", overLimit: ReasoningEffortOverLimitDeny, path: "input.0.reasoning.effort", want: "high", deny: true},
 		{name: "flat caps high", body: `{"reasoning_effort":"high"}`, max: "low", path: "reasoning_effort", want: "low", changed: true},
 		{name: "Anthropic output config caps max", body: `{"output_config":{"effort":"max"}}`, max: "xhigh", path: "output_config.effort", want: "xhigh", changed: true},
 		{name: "Anthropic output config maps before cap", body: `{"output_config":{"effort":"max"}}`, max: "high", mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}}, path: "output_config.effort", want: "high", changed: true},

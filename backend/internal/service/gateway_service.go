@@ -736,10 +736,11 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 // ShouldReportAccountScheduleFailure prevents provider- and request-scoped
 // credential failures from being misattributed to the selected account. Legacy
 // and inference failures retain their existing scheduler-health behavior,
-// except an Excel BPS 429, which only cools the account's BPS route, and a
-// local BPS image admission rejection, which never reached the upstream.
+// except an Excel BPS 429, which only cools the account's BPS route, a BPS
+// stream stall that only retries this request, and a local BPS image admission
+// rejection, which never reached the upstream.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
-	if e == nil || e.Reason == ExcelBPSRateLimitedReason || e.Reason == GrokUnknownForbiddenReason || e.IsExcelBPSImageAdmissionRejection() {
+	if e == nil || e.Reason == ExcelBPSRateLimitedReason || e.Reason == ExcelBPSStreamIdleReason || e.Reason == GrokUnknownForbiddenReason || e.IsExcelBPSImageAdmissionRejection() {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,8 +21,13 @@ const ExcelBPSRateLimitedReason = GatewayFailureReason("basispoints_rate_limited
 // normalized to basispoints_upstream_error. Another account may still serve it.
 const ExcelBPSUpstreamErrorReason = GatewayFailureReason("basispoints_upstream_error")
 
+// ExcelBPSStreamIdleReason marks a BPS stream that stalled before any semantic
+// event reached the client. Another account may still serve the same request.
+const ExcelBPSStreamIdleReason = GatewayFailureReason("basispoints_stream_idle")
+
 const excelBPSRateLimitedClientMessage = "Excel BPS rate limit exceeded, please retry later"
 const excelBPSUpstreamErrorClientMessage = "Excel BPS upstream request failed, please retry later"
+const excelBPSStreamIdleClientMessage = "Excel BPS stream timed out, please retry later"
 
 // excelBPSRateLimitedFilterReason names BPS cooldowns in "no available
 // accounts" diagnostics; the handler reports such pools as rate limited.
@@ -64,6 +70,67 @@ func newExcelBPSUpstreamFailoverError(status int) *UpstreamFailoverError {
 		ClientStatusCode:  status,
 		ClientMessage:     excelBPSUpstreamErrorClientMessage,
 	}
+}
+
+// newExcelBPSStreamIdleFailoverError asks the handler to send the same request
+// to another account. It is only returned before semantic SSE reaches the client.
+func newExcelBPSStreamIdleFailoverError() *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusGatewayTimeout,
+		Stage:             GatewayFailureStageInference,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            ExcelBPSStreamIdleReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  http.StatusGatewayTimeout,
+		ClientMessage:     excelBPSStreamIdleClientMessage,
+	}
+}
+
+// excelBPSStreamIdleError matches the BPS progress deadline and an upstream
+// read that reports the stream died while waiting for SSE.
+func excelBPSStreamIdleError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, basispoints.ErrStreamProgressTimeout) || errors.Is(err, errOpenAISSEIdle) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "waiting for sse") || strings.Contains(msg, "disconnected before completion") {
+		return true
+	}
+	return strings.Contains(msg, "idle timeout") && (strings.Contains(msg, "sse") || strings.Contains(msg, "stream"))
+}
+
+func excelBPSDownstreamLineIsSemantic(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "data:") || strings.HasPrefix(trimmed, "event:")
+}
+
+func excelBPSUpstreamAttemptStarted(c *gin.Context) bool {
+	return c != nil && c.GetInt("excel_bps_upstream_attempt") > 0
+}
+
+// excelBPSIdleFailoverError switches accounts only when the stall happened
+// before any semantic SSE line was written. Keepalive comments do not count.
+func excelBPSIdleFailoverError(c *gin.Context, ctx context.Context, err error, semanticWritten bool) *UpstreamFailoverError {
+	if semanticWritten || !excelBPSStreamIdleError(err) || IsResponseCommitted(c) || isQualityObservation(ctx) {
+		return nil
+	}
+	return newExcelBPSStreamIdleFailoverError()
+}
+
+// excelBPSChatIdleTimeoutFailover covers the chat reader interval timer. BPS
+// installs that body on the same gin context, so a pre-output stall can move
+// to another account instead of ending the stream.
+func excelBPSChatIdleTimeoutFailover(c *gin.Context, clientOutputStarted bool) *UpstreamFailoverError {
+	if clientOutputStarted || !excelBPSUpstreamAttemptStarted(c) || IsResponseCommitted(c) {
+		return nil
+	}
+	if c != nil && c.Request != nil && isQualityObservation(c.Request.Context()) {
+		return nil
+	}
+	return newExcelBPSStreamIdleFailoverError()
 }
 
 func excelBPSResponseStarted(c *gin.Context) bool {

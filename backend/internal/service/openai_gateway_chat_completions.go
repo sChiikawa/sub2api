@@ -1257,6 +1257,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 			}
+			if failover := excelBPSIdleFailoverError(c, c.Request.Context(), err, clientOutputStarted); failover != nil {
+				return nil, failover
+			}
 			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
 		}
 		if frame, ok := parser.Finish(); ok {
@@ -1332,6 +1335,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
+				if failover := excelBPSIdleFailoverError(c, c.Request.Context(), ev.err, clientOutputStarted); failover != nil {
+					return nil, failover
+				}
 				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
 			}
 			lastDataAt = time.Now()
@@ -1360,6 +1366,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
+			if failover := excelBPSChatIdleTimeoutFailover(c, clientOutputStarted); failover != nil {
+				return nil, failover
+			}
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
