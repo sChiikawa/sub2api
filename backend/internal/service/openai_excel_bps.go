@@ -199,6 +199,88 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 	return req, nil
 }
 
+// Chat Completions on an Excel OAuth account cannot use the native Codex URL.
+// Send the converted Responses body through BPS, then translate the stream back
+// into Chat Completions events.
+func (s *OpenAIGatewayService) forwardChatCompletionsViaExcelBPS(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	responsesBody []byte,
+	originalModel, billingModel, upstreamModel string,
+	clientStream bool,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	model := account.GetMappedModel(upstreamModel)
+	if strings.TrimSpace(model) == "" {
+		model = upstreamModel
+	}
+	body, err := sjson.SetBytes(responsesBody, "model", model)
+	if err != nil {
+		return nil, err
+	}
+	identity, transient := resolveExcelBPSIdentity(c, body, getAPIKeyIDFromContext(c), account.IsExcelBPSMihomoEnabled())
+	if identity != "" {
+		body, err = sjson.SetBytes(body, "prompt_cache_key", identity)
+		if err != nil {
+			return nil, err
+		}
+	}
+	scope := fmt.Sprintf("account:%d/key:%d/thread:%s", account.ID, getAPIKeyIDFromContext(c), identity)
+	if transient {
+		scope = "transient:" + scope
+	}
+	upstreamBody, _, err := basispoints.Prepare(body, scope, nil)
+	if err != nil {
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	token, err := s.getExcelBPSAccessToken(ctx, account)
+	if err != nil {
+		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Excel OAuth credential is unavailable")
+		return nil, err
+	}
+	accountID := excelBPSAccountID(account, token)
+	if accountID == "" {
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Excel BPS requires chatgpt_account_id")
+		return nil, errors.New("excel bps account id missing")
+	}
+	requestCtx := WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS))
+	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
+	SetOpsUpstreamModel(c, model)
+	resp, lease, _, err := s.doExcelBPSRequest(requestCtx, c, account, scope, upstreamBody, token, accountID, s.excelBPSAcquireFor(account))
+	if err != nil {
+		if isExcelBPSClientCancellation(c, err) {
+			return nil, context.Canceled
+		}
+		return nil, err
+	}
+	if lease != nil {
+		defer lease.Release()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if !isQualityObservation(ctx) {
+			s.coolDownExcelBPS(ctx, account, resp.Header.Get("Retry-After"))
+		}
+		return nil, newExcelBPSRateLimitedFailoverError(resp.Header.Get("Retry-After"))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, newExcelBPSUpstreamFailoverError(resp.StatusCode)
+	}
+	var result *OpenAIForwardResult
+	var handleErr error
+	if clientStream {
+		result, handleErr = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, model, startTime, len(responsesBody))
+	} else {
+		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, model, startTime)
+	}
+	if result != nil && strings.TrimSpace(result.UpstreamEndpoint) == "" {
+		result.UpstreamEndpoint = "/basispoints/api/responses"
+	}
+	return result, handleErr
+}
+
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (forwardResult *OpenAIForwardResult, forwardErr error) {
@@ -805,6 +887,16 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	terminal := ""
 	terminalSuccessful := false
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
+	var heldStream []string
+	releaseHeldStream := func() {
+		for _, held := range heldStream {
+			_, _ = c.Writer.WriteString(held + "\n")
+			if held == "" {
+				c.Writer.Flush()
+			}
+		}
+		heldStream = nil
+	}
 	for scanner.Next(ctx, 0, heartbeat.C, keepalive) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -862,8 +954,8 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 					})
 				}
 				if upstreamFailure != nil {
-					// Preserve the actual HTTP status separately from the event's
-					// semantic status. An accepted generation is never replayed.
+					// The HTTP status stays separate from this event's semantic
+					// status. Output already delivered to the client is not replayed.
 					setOpsUpstreamError(c, resp.StatusCode, upstreamFailure.Message, "")
 					MarkOpsStreamErrorValue(c, OpsStreamError{
 						ErrType: upstreamFailure.Type, Code: upstreamFailure.Code, Message: upstreamFailure.Message,
@@ -875,7 +967,20 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				}
 			}
 		}
+		// A 429 or unrecognized upstream failure before any client output can move
+		// to another BPS account. Output that already reached the client is never replayed.
+		if excelBPSShouldSwitchInBandFailure(c, ctx, result, upstreamFailure) {
+			if upstreamFailure.Status == http.StatusTooManyRequests {
+				return failoverRateLimited(resp.Header.Get("Retry-After"))
+			}
+			return nil, newExcelBPSUpstreamFailoverError(upstreamFailure.Status)
+		}
+		if stream && result.FirstTokenMs == nil && terminal == "" && !excelBPSResponseStarted(c) {
+			heldStream = append(heldStream, line)
+			continue
+		}
 		if stream {
+			releaseHeldStream()
 			if _, err = c.Writer.WriteString(line + "\n"); err != nil {
 				result.ClientDisconnect = true
 				if isExcelBPSClientCancellation(c, c.Request.Context().Err()) {

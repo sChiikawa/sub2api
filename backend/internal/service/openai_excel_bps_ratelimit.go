@@ -8,13 +8,19 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 )
 
 // ExcelBPSRateLimitedReason marks a BPS 429 that another account may still
 // serve. It doubles as the client-facing error code once failover is exhausted.
 const ExcelBPSRateLimitedReason = GatewayFailureReason("basispoints_rate_limited")
 
+// ExcelBPSUpstreamErrorReason marks an in-band BPS failure whose code was
+// normalized to basispoints_upstream_error. Another account may still serve it.
+const ExcelBPSUpstreamErrorReason = GatewayFailureReason("basispoints_upstream_error")
+
 const excelBPSRateLimitedClientMessage = "Excel BPS rate limit exceeded, please retry later"
+const excelBPSUpstreamErrorClientMessage = "Excel BPS upstream request failed, please retry later"
 
 // excelBPSRateLimitedFilterReason names BPS cooldowns in "no available
 // accounts" diagnostics; the handler reports such pools as rate limited.
@@ -42,6 +48,44 @@ func newExcelBPSRateLimitedFailoverError(retryAfter string) *UpstreamFailoverErr
 		failoverErr.ResponseHeaders = http.Header{"Retry-After": {strings.TrimSpace(retryAfter)}}
 	}
 	return failoverErr
+}
+
+func newExcelBPSUpstreamFailoverError(status int) *UpstreamFailoverError {
+	if status < 400 || status > 599 {
+		status = http.StatusBadGateway
+	}
+	return &UpstreamFailoverError{
+		StatusCode:        status,
+		Stage:             GatewayFailureStageInference,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            ExcelBPSUpstreamErrorReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  status,
+		ClientMessage:     excelBPSUpstreamErrorClientMessage,
+	}
+}
+
+func excelBPSResponseStarted(c *gin.Context) bool {
+	if c == nil || c.Writer == nil {
+		return false
+	}
+	return IsResponseCommitted(c) || c.Writer.Written() || c.Writer.Size() > 0
+}
+
+// excelBPSShouldSwitchInBandFailure is true when BPS accepted the HTTP call
+// but ended it with a 429 or an unrecognized upstream error before the client
+// received any output.
+func excelBPSShouldSwitchInBandFailure(c *gin.Context, ctx context.Context, result *OpenAIForwardResult, failure *basispoints.UpstreamFailure) bool {
+	if failure == nil || isQualityObservation(ctx) {
+		return false
+	}
+	if failure.Status != http.StatusTooManyRequests && failure.Code != "basispoints_upstream_error" {
+		return false
+	}
+	if result != nil && result.FirstTokenMs != nil {
+		return false
+	}
+	return !excelBPSResponseStarted(c)
 }
 
 // coolDownExcelBPS skips the account for BPS requests until the upstream

@@ -199,6 +199,36 @@ func TestExcelOAuthSelectedModelBPSControl(t *testing.T) {
 	}
 }
 
+func TestExcelOAuthChatCompletionsHiUsesBPS(t *testing.T) {
+	wire := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"Hi"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_hi","object":"response","model":"gpt-6-astra","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(wire)),
+	}}
+	gateway := openAIClientToolsTestService(upstream)
+	account := excelAccount()
+	account.Credentials["client_id"] = openai.ExcelClientID
+	body := []byte(`{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}],"stream":false,"stream_options":{"include_usage":true},"frequency_penalty":0,"presence_penalty":0}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	result, err := gateway.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
+	require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+	require.NotContains(t, rec.Body.String(), "Upstream request failed")
+	require.Contains(t, rec.Body.String(), "Hi")
+}
+
 func TestExcelOAuthIsolationPreservesCodexMixedRoute(t *testing.T) {
 	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"detail":"Unauthorized"}`))}}
 	gateway := openAIClientToolsTestService(upstream)

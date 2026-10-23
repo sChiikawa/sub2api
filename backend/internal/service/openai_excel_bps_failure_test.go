@@ -118,6 +118,24 @@ func TestExcelBPSFailureClassification(t *testing.T) {
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 				result, err := svc.Forward(context.Background(), c, account, body)
+				if !stream && (tc.status == http.StatusTooManyRequests || tc.wantCode == "basispoints_upstream_error") {
+					var failover *UpstreamFailoverError
+					require.ErrorAs(t, err, &failover)
+					require.Equal(t, tc.status, failover.StatusCode)
+					require.Equal(t, NextAccountRetry, failover.NextAccountAction)
+					require.False(t, IsResponseCommitted(c))
+					require.False(t, c.Writer.Written())
+					require.Equal(t, tc.status == http.StatusTooManyRequests, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
+					if tc.status == http.StatusTooManyRequests {
+						require.Equal(t, ExcelBPSRateLimitedReason, failover.Reason)
+					} else {
+						require.Equal(t, ExcelBPSUpstreamErrorReason, failover.Reason)
+					}
+					require.Len(t, upstream.requests, 1)
+					require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+					require.True(t, account.IsExcelBPSEnabled())
+					return
+				}
 				require.Error(t, err)
 				require.NotNil(t, result)
 				require.Equal(t, tc.event, result.UpstreamTerminalEvent)

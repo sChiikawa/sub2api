@@ -349,6 +349,13 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	responsesBody = updatedBody
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 
+	if codexAccountIdentitySource(c, account).IsExcelOAuth() {
+		if err := s.validateExcelOAuthRoute(ctx, account, upstreamModel); err != nil {
+			return nil, writeExcelOAuthRouteError(c)
+		}
+		return s.forwardChatCompletionsViaExcelBPS(ctx, c, account, responsesBody, originalModel, billingModel, upstreamModel, clientStream, startTime)
+	}
+
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
