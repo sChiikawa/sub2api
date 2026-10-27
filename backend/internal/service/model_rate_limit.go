@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"time"
 
@@ -209,8 +210,9 @@ func (a *Account) modelRateLimitReason(scope string) string {
 	return reason
 }
 
-// modelCapabilityRejected reports only an unexpired, explicit upstream model
-// rejection. Ordinary quota/capacity cooldowns and unknown reasons stay faults.
+// modelCapabilityRejected identifies an unexpired upstream observation for
+// scheduling/admission. It is not authoritative configured support: availability
+// diagnostics must not use it to manufacture a new downstream model_not_found.
 func (a *Account) modelCapabilityRejected(scope string) bool {
 	if !a.isRateLimitActiveForKey(scope) {
 		return false
@@ -235,17 +237,12 @@ func (a *Account) modelCapabilityRejectedForRequest(ctx context.Context, model s
 	return a.modelCapabilityRejected(scope)
 }
 
+// setAccountModelRateLimitSnapshot 把模型级限流写进本账号对象的 Extra 快照。
+// 写时复制：Extra 与其中的 model_rate_limits 可能与调度快照母本及其它副本共享，
+// 这里只读取旧 map，写入新复制的 map 后替换 account.Extra，不修改任何已有 map。
 func setAccountModelRateLimitSnapshot(account *Account, scope string, resetAt time.Time, reason string, now time.Time) {
 	if account == nil || strings.TrimSpace(scope) == "" {
 		return
-	}
-	if account.Extra == nil {
-		account.Extra = make(map[string]any)
-	}
-	limits, ok := account.Extra[modelRateLimitsKey].(map[string]any)
-	if !ok {
-		limits = make(map[string]any)
-		account.Extra[modelRateLimitsKey] = limits
 	}
 	payload := map[string]any{
 		"rate_limited_at":     now.UTC().Format(time.RFC3339),
@@ -254,5 +251,14 @@ func setAccountModelRateLimitSnapshot(account *Account, scope string, resetAt ti
 	if reason = strings.TrimSpace(reason); reason != "" {
 		payload["reason"] = reason
 	}
+
+	oldLimits, _ := account.Extra[modelRateLimitsKey].(map[string]any)
+	limits := make(map[string]any, len(oldLimits)+1)
+	maps.Copy(limits, oldLimits)
 	limits[scope] = payload
+
+	extra := make(map[string]any, len(account.Extra)+1)
+	maps.Copy(extra, account.Extra)
+	extra[modelRateLimitsKey] = limits
+	account.Extra = extra
 }

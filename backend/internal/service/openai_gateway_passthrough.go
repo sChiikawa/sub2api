@@ -888,6 +888,11 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isOpenAIRequestBodyTooLargeError(statusCode, "", responseBody) {
 		return true
 	}
+	// A definite missing model cools only this account/model pair. Let the
+	// handler try another candidate before committing a passthrough 404.
+	if account != nil && account.IsOpenAICompatible() && isUpstreamModelNotFoundError(statusCode, responseBody) {
+		return true
+	}
 	if account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) {
 		return true
 	}
@@ -1196,7 +1201,9 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 // Lifecycle metadata and transport heartbeats are not model output.
 func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress", "keepalive":
+	// Queuing and moderation metadata do not commit model output or disarm the
+	// first-output timeout; a following overload must remain safe to retry.
+	case "response.created", "response.queued", "response.in_progress", "response.metadata", "keepalive":
 		return true
 	default:
 		return false
@@ -1258,7 +1265,7 @@ func openAIStreamAddedEventStartsClientOutput(payload []byte, eventType string) 
 		default:
 			return true
 		}
-	case "response.content_part.added":
+	case "response.content_part.added", "response.content_part.done":
 		part := gjson.GetBytes(payload, "part")
 		if !part.Exists() || !part.IsObject() {
 			return true
@@ -1271,7 +1278,7 @@ func openAIStreamAddedEventStartsClientOutput(payload []byte, eventType string) 
 		default:
 			return true
 		}
-	case "response.reasoning_summary_part.added":
+	case "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 		part := gjson.GetBytes(payload, "part")
 		if !part.Exists() || !part.IsObject() || strings.TrimSpace(part.Get("type").String()) != "summary_text" {
 			return true
@@ -1287,6 +1294,7 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	if trimmed == "" {
 		return false
 	}
+	field := ""
 	switch strings.TrimSpace(eventType) {
 	case "response.failed":
 		return false
@@ -1298,8 +1306,20 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 		// （content_policy / invalid_request 等）维持原样转发，保留上游错误细节。
 		payload := []byte(trimmed)
 		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
-	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added":
+	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added",
+		"response.content_part.done", "response.reasoning_summary_part.done":
 		return openAIStreamAddedEventStartsClientOutput([]byte(trimmed), eventType)
+	case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.delta",
+		"response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.refusal.delta":
+		field = "delta"
+	case "response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done":
+		field = "text"
+	case "response.refusal.done":
+		field = "refusal"
+	}
+	if field != "" && gjson.Valid(trimmed) {
+		value := gjson.Get(trimmed, field)
+		return value.Type != gjson.String || value.String() != ""
 	}
 	return !openAIStreamEventIsMetadata(eventType)
 }
@@ -1416,12 +1436,32 @@ func openAIStreamFailedEventErrorCode(payload []byte) string {
 // 上游在容量紧张时会把请求丢进降载路径：HTTP 200 之后立刻推 event: error
 // （code=server_is_overloaded / slow_down）并以 response.failed 收尾。
 func isOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
-	switch openAIStreamFailedEventErrorCode(payload) {
-	case "server_is_overloaded", "slow_down":
-		return true
+	// Explicit quota, credential and safety rejections outrank capacity wording.
+	// A relay may include that wording in an otherwise authoritative rejection.
+	for _, path := range []string{"response.error.type", "error.type"} {
+		value := strings.ToLower(gjson.GetBytes(payload, path).String())
+		for _, marker := range []string{"usage_limit", "quota", "authentication", "permission", "policy", "safety"} {
+			if strings.Contains(value, marker) {
+				return false
+			}
+		}
 	}
-	for _, path := range []string{"response.error.message", "error.message", "message"} {
-		if isOpenAICapacityShedMessage(gjson.GetBytes(payload, path).String()) {
+	for _, path := range []string{"response.error.resets_at", "error.resets_at"} {
+		if gjson.GetBytes(payload, path).Exists() {
+			return false
+		}
+	}
+	switch openAIStreamFailedEventErrorCode(payload) {
+	case "server_is_overloaded", "slow_down", OpenAIUpstreamCapacityCode:
+		return true
+	case "", "server_error", "upstream_error", "rate_limit_exceeded":
+		// Generic codes need an explicit capacity message below.
+	default:
+		return false
+	}
+	for _, path := range []string{"response.error.message", "error.message", "message", "detail"} {
+		value := gjson.GetBytes(payload, path)
+		if value.Type == gjson.String && isOpenAICapacityShedMessage(value.String()) {
 			return true
 		}
 	}
@@ -2200,6 +2240,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithImage(
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
+		if clientDisconnected {
+			markPriorityDownstreamDisconnect(ctx)
+		}
 		return &openaiStreamingResultPassthrough{
 			usage:            usage,
 			clientDisconnect: clientDisconnected,

@@ -1,5 +1,8 @@
 import { apiClient } from '../client'
 export interface PrioritySchedulingConfig {
+  error_rate_weight?: number
+  error_rate_window_minutes?: number
+  error_rate_prior_samples?: number
   oauth_quota_priority?: boolean
   oauth_quota_threshold?: number
   balance_protocols?: boolean
@@ -24,6 +27,16 @@ export interface PrioritySchedulingConfig {
 }
 export type PriorityHistoryStatus = 'ready' | 'stale' | 'partial' | 'loading' | 'error' | 'unavailable' | 'limited'
 export interface PriorityCandidate {
+  error_rate?: number | null
+  error_smoothed_rate?: number
+  error_successes?: number
+  error_failures?: number
+  error_window_minutes?: number
+  error_prior_samples?: number
+  error_observed_at?: string
+  error_endpoint?: string
+  error_penalty?: number
+  base_score?: number
   oauth_quota_role?: 'preferred' | 'standby'
   history_status?: PriorityHistoryStatus
   capacity_band?: number
