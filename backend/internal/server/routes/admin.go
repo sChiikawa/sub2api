@@ -919,6 +919,7 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/account-quality-plans/:id/run", h.Admin.ScheduledTest.TriggerQuality)
 	admin.GET("/account-quality-plans/:id/ownership", h.Admin.ScheduledTest.QualityOwnershipPreview)
 	admin.POST("/account-quality-plans/:id/ownership/reconcile", h.Admin.ScheduledTest.QualityOwnershipReconcile)
+	admin.POST("/account-quality-plans/:id/ownership/restore", h.Admin.ScheduledTest.QualityOwnershipRestore)
 	admin.GET("/account-quality-templates", h.Admin.ScheduledTest.ListQualityTemplates)
 	admin.GET("/account-quality-presets", h.Admin.ScheduledTest.ListQualityPresets)
 	admin.POST("/account-quality-presets", h.Admin.ScheduledTest.CreateQualityPreset)
@@ -1008,6 +1009,9 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	channels := admin.Group("/channels")
 	{
 		channels.GET("", h.Admin.Channel.List)
+		channels.GET("/:id/operations", h.Admin.Channel.OperationsCatalog)
+		channels.POST("/:id/operations", h.Admin.Channel.MutateOperations)
+		channels.GET("/operations/snapshot", h.Admin.Channel.OperationsSnapshot)
 		channels.GET("/model-pricing", h.Admin.Channel.GetModelDefaultPricing)
 		channels.GET("/pricing/sync-models", h.Admin.Channel.SyncPricingModels)
 		channels.GET("/:id", h.Admin.Channel.GetByID)
