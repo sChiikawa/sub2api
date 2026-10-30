@@ -333,6 +333,20 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		errorEventSent = true
 		// Responses error events use top-level code/message/param fields. A nested
 		// Chat Completions error envelope loses the classification in strict clients.
+		if openAIUsageHasTokens(usage) {
+			// new-api bills /v1/responses from response.failed usage. A bare
+			// error frame has no token fields, so the failed terminal goes out first.
+			failedFrame := buildOpenAIResponseFailedSSE(responseID, originalModel, time.Now().Unix(), nil, message, usage)
+			if err := flushBuffered(); err != nil {
+				clientDisconnected = true
+				return
+			}
+			if _, err := writePendingString(failedFrame); err != nil {
+				clientDisconnected = true
+				return
+			}
+			failureDelivered = true
+		}
 		payload := `{"type":"error","sequence_number":0,"code":` + strconv.Quote(code) + `,"message":` + strconv.Quote(message) + `,"param":null}`
 		if err := flushBuffered(); err != nil {
 			clientDisconnected = true
@@ -399,7 +413,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && !clientDisconnected {
 			applyAttemptResponseHeaders()
-			if _, err := writePendingString(buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtStamper.Value(), bareErrorPayload, failedMessage)); err != nil {
+			if _, err := writePendingString(buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtStamper.Value(), bareErrorPayload, failedMessage, usage)); err != nil {
 				handlePendingWriteError(err)
 			} else {
 				failureDelivered = true
@@ -713,13 +727,18 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
 			}
+			clientPayload := dataBytes
 			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
-				dataBytes,
+				clientPayload,
 				eventType,
 				openAIStreamClientOutputStarted(c, clientOutputStarted),
 			); sanitized {
-				dataBytes = sanitizedData
-				data = string(sanitizedData)
+				clientPayload = sanitizedData
+			}
+			clientPayload = ensureOpenAIFailedResponseUsage(clientPayload, usage)
+			if !bytes.Equal(clientPayload, dataBytes) {
+				dataBytes = clientPayload
+				data = string(clientPayload)
 				line = "data: " + data
 			}
 			if stampedData, stamped := createdAtStamper.Stamp(dataBytes, eventType); stamped {
@@ -1905,10 +1924,56 @@ func extractOpenAISSEErrorMessage(payload []byte) string {
 	return sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(payload)))
 }
 
+// openAIResponsesClientUsageMap is the /v1/responses usage object new-api bills:
+// output_tokens and input_tokens_details.cached_tokens. Nil when nothing was consumed.
+func openAIResponsesClientUsageMap(usage *OpenAIUsage) map[string]any {
+	if !openAIUsageHasTokens(usage) {
+		return nil
+	}
+	body := map[string]any{
+		"input_tokens":  usage.InputTokens,
+		"output_tokens": usage.OutputTokens,
+		"total_tokens":  usage.InputTokens + usage.OutputTokens,
+	}
+	details := map[string]any{}
+	if usage.CacheReadInputTokens > 0 {
+		details["cached_tokens"] = usage.CacheReadInputTokens
+	}
+	if usage.CacheCreationInputTokens > 0 {
+		details["cache_creation_tokens"] = usage.CacheCreationInputTokens
+		body["cache_creation_input_tokens"] = usage.CacheCreationInputTokens
+	}
+	if len(details) > 0 {
+		body["input_tokens_details"] = details
+	}
+	return body
+}
+
+// ensureOpenAIFailedResponseUsage copies accumulated stream usage onto a
+// response.failed event that arrived without one. An existing usage object is
+// left unchanged so an authoritative upstream count is not rewritten.
+func ensureOpenAIFailedResponseUsage(payload []byte, usage *OpenAIUsage) []byte {
+	usageBody := openAIResponsesClientUsageMap(usage)
+	if usageBody == nil || len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return payload
+	}
+	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.failed" || !gjson.GetBytes(payload, "response").Exists() {
+		return payload
+	}
+	if gjson.GetBytes(payload, "response.usage").Exists() {
+		return payload
+	}
+	updated, err := sjson.SetBytes(payload, "response.usage", usageBody)
+	if err != nil {
+		return payload
+	}
+	return updated
+}
+
 // buildOpenAIResponseFailedSSE synthesizes the response.failed terminal for a
 // stream that ended on a bare error. created_at and sequence_number are always
 // written: strict clients (grok-build, Codex) reject the frame without them.
-func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, source []byte, fallbackMessage string) string {
+func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, source []byte, fallbackMessage string, usage *OpenAIUsage) string {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
 		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -1952,6 +2017,9 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 	}
 	if model = strings.TrimSpace(model); model != "" {
 		response["model"] = model
+	}
+	if usageBody := openAIResponsesClientUsageMap(usage); usageBody != nil {
+		response["usage"] = usageBody
 	}
 	payload, err := marshalOpenAIUpstreamJSON(gin.H{
 		"type":            "response.failed",
@@ -2010,7 +2078,9 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	for _, path := range []string{
 		"response.instructions",
 		"response.output",
-		"response.usage",
+		// response.usage stays. /v1/responses clients such as new-api bill
+		// output_tokens and input_tokens_details.cached_tokens from this object;
+		// deleting it makes a failed stream look like zero output and no cache.
 		"response.metadata",
 		"response.reasoning",
 		"response.tools",

@@ -113,7 +113,7 @@ func (w *openAIHeaderWaitWriter) writeFailure(body []byte) (int, error) {
 	header.Set("Content-Type", "text/event-stream")
 	header.Del("Content-Length")
 	header.Del("Content-Encoding")
-	frame := buildOpenAIResponseFailedSSE("", "", time.Now().Unix(), source, message)
+	frame := buildOpenAIResponseFailedSSE("", "", time.Now().Unix(), source, message, nil)
 	if _, err := w.ResponseWriter.WriteString(frame); err != nil {
 		w.writeErr = err
 		return 0, err

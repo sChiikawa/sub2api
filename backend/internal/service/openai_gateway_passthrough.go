@@ -2197,7 +2197,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithImage(
 		if clientDisconnected || !writePendingLines() {
 			return
 		}
-		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), bareErrorPayload, failedMessage)); err != nil {
+		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), bareErrorPayload, failedMessage, usage)); err != nil {
 			clientDisconnected = true
 			return
 		}
@@ -2413,14 +2413,19 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithImage(
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
 			imageCounter.AddSSEData(dataBytes)
+			clientPayload := dataBytes
 			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
-				dataBytes,
+				clientPayload,
 				eventType,
 				openAIStreamClientOutputStarted(c, clientOutputStarted),
 			); sanitized {
-				dataBytes = sanitizedData
-				trimmedData = strings.TrimSpace(string(sanitizedData))
-				line = "data: " + string(sanitizedData)
+				clientPayload = sanitizedData
+			}
+			clientPayload = ensureOpenAIFailedResponseUsage(clientPayload, usage)
+			if !bytes.Equal(clientPayload, dataBytes) {
+				dataBytes = clientPayload
+				trimmedData = strings.TrimSpace(string(clientPayload))
+				line = "data: " + string(clientPayload)
 			}
 			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
 			if lineStartsClientOutput {
@@ -2512,7 +2517,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithImage(
 			// does not authorize replay, account cooldown or a fabricated success.
 			stopKeepalive()
 			if !clientDisconnected {
-				_, writeErr := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), nil, "Upstream stream timed out"))
+				_, writeErr := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), nil, "Upstream stream timed out", usage))
 				if writeErr == nil {
 					if err := FlushGatewayResponse(w); err != nil {
 						clientDisconnected = true

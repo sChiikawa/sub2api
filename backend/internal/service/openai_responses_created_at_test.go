@@ -113,7 +113,7 @@ func TestEnsureOpenAIResponseObjectCreatedAt(t *testing.T) {
 
 func TestBuildOpenAIResponseFailedSSE_CarriesCreatedAtAndSequenceNumber(t *testing.T) {
 	frame := buildOpenAIResponseFailedSSE("resp_1", "gpt-5.5", 1700000000,
-		[]byte(`{"type":"error","sequence_number":7,"error":{"code":"server_is_overloaded","message":"busy"}}`), "")
+		[]byte(`{"type":"error","sequence_number":7,"error":{"code":"server_is_overloaded","message":"busy"}}`), "", nil)
 	payloads := sseDataPayloads(frame)
 	require.Len(t, payloads, 1)
 	event := payloads[0]
@@ -123,11 +123,29 @@ func TestBuildOpenAIResponseFailedSSE_CarriesCreatedAtAndSequenceNumber(t *testi
 	require.Equal(t, "resp_1", gjson.Get(event, "response.id").String())
 	require.Equal(t, "failed", gjson.Get(event, "response.status").String())
 
-	frame = buildOpenAIResponseFailedSSE("", "", 0, []byte(`{"type":"error","error":{"message":"boom"}}`), "")
+	frame = buildOpenAIResponseFailedSSE("", "", 0, []byte(`{"type":"error","error":{"message":"boom"}}`), "", &OpenAIUsage{
+		InputTokens: 1200, OutputTokens: 30, CacheReadInputTokens: 900,
+	})
 	event = sseDataPayloads(frame)[0]
+	require.EqualValues(t, 30, gjson.Get(event, "response.usage.output_tokens").Int())
+	require.EqualValues(t, 900, gjson.Get(event, "response.usage.input_tokens_details.cached_tokens").Int())
 	require.True(t, gjson.Get(event, "sequence_number").Exists(), "sequence_number 未知时也必须写出")
 	require.EqualValues(t, 0, gjson.Get(event, "sequence_number").Int())
 	require.Positive(t, gjson.Get(event, "response.created_at").Int(), "未知 created_at 时取当前时间")
+}
+
+func TestSanitizeOpenAIResponseFailedKeepsUsageForDownstreamBilling(t *testing.T) {
+	payload := []byte(`{"type":"response.failed","response":{"status":"failed","output":[{"type":"message"}],"usage":{"input_tokens":1000,"output_tokens":40,"input_tokens_details":{"cached_tokens":800}},"error":{"message":"boom"}}}`)
+	got, changed := sanitizeOpenAIResponseFailedEventForClient(payload, "response.failed", true)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(got, "response.output").Exists())
+	require.EqualValues(t, 40, gjson.GetBytes(got, "response.usage.output_tokens").Int())
+	require.EqualValues(t, 800, gjson.GetBytes(got, "response.usage.input_tokens_details.cached_tokens").Int())
+
+	bare := []byte(`{"type":"response.failed","response":{"status":"failed","error":{"message":"boom"}}}`)
+	filled := ensureOpenAIFailedResponseUsage(bare, &OpenAIUsage{InputTokens: 1000, OutputTokens: 40, CacheReadInputTokens: 800})
+	require.EqualValues(t, 40, gjson.GetBytes(filled, "response.usage.output_tokens").Int())
+	require.EqualValues(t, 800, gjson.GetBytes(filled, "response.usage.input_tokens_details.cached_tokens").Int())
 }
 
 func TestBuildOpenAIWSHTTPBridgeFailedEvent_CarriesCreatedAtAndSequenceNumber(t *testing.T) {

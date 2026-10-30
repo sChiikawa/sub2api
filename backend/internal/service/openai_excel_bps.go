@@ -1048,7 +1048,27 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		s.rateLimitService.observeQualityStatus(ctx, account, http.StatusBadGateway)
 		MarkResponseCommitted(c)
 		if stream {
-			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
+			clientUsage := result.Usage
+			if account.IsExcelBPSEnabled() && clientUsage.CacheReadInputTokens == 0 {
+				clientUsage.CacheReadInputTokens = excelBPSMissedCacheReadTokens(result.RequestID, clientUsage, cacheCreationAsInput)
+			}
+			failed := map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"status": "failed",
+					"error": map[string]any{
+						"type":    "server_error",
+						"code":    "basispoints_stream_incomplete",
+						"message": "Upstream stream ended before completion",
+					},
+				},
+			}
+			if usageBody := openAIResponsesClientUsageMap(&clientUsage); usageBody != nil {
+				failed["response"].(map[string]any)["usage"] = usageBody
+			}
+			if raw, marshalErr := json.Marshal(failed); marshalErr == nil {
+				_, _ = c.Writer.WriteString("event: response.failed\ndata: " + string(raw) + "\n\n")
+			}
 			c.Writer.Flush()
 		} else {
 			c.JSON(502, gin.H{"error": gin.H{"type": "server_error", "code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"}})
