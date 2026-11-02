@@ -765,11 +765,6 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 		h.Del(openAICodexTurnStateHeader)
 		return ErrOpenAICodexTicketUnavailable
 	}
-	// Business requests rotate saved gateway cookies and do not wear a harvested
-	// or borrowed ticket.
-	if s.UnifiedAstraTicketsEnabled(ctx) {
-		return nil
-	}
 	cfg := s.openAICodexTicketConfig()
 	if !openAICodexSkipHarvest(account) && cfg.FailClosed && s.openAICodexTicketHarvestExcluded(account) {
 		return denyOpenAITicket()
