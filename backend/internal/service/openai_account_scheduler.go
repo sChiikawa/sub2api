@@ -69,7 +69,9 @@ var openAIAdvancedSchedulerSettingCache atomic.Value // *cachedOpenAIAdvancedSch
 var openAIAdvancedSchedulerSettingSF singleflight.Group
 
 type OpenAIAccountScheduleRequest struct {
-	priorityLatencyPool *priorityLatencyPool
+	ObservationEffort       string
+	ObservationEffortScoped bool
+	priorityLatencyPool     *priorityLatencyPool
 
 	GroupID                 *int64
 	Platform                string
@@ -755,7 +757,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		slog.Info("sticky_escape_triggered", "account_id", accountID, "reason", "priority_capacity_imbalance")
 		return nil, true, nil
 	}
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.DisableStickyEscape && !req.EncryptedReasoning {
+	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyForRequest(req, accountID, escapeCfg); shouldEscape && !req.DisableStickyEscape && !req.EncryptedReasoning {
 		slog.Info("sticky_escape_triggered",
 			"account_id", accountID,
 			"reason", reason,
@@ -866,6 +868,7 @@ type openAIAccountCandidateScore struct {
 	priorityAPIStandby                 bool
 	priorityLatencyFactor              float64
 	priorityUnhealthy                  bool
+	priorityLatencyPenalty             bool
 	priorityLatencyRecovery            bool
 	priorityRecoveryExplorationPercent int
 	priorityExploration                bool
@@ -922,8 +925,10 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	if left.account.Priority != right.account.Priority {
 		return left.account.Priority < right.account.Priority
 	}
-	if left.loadInfo.LoadRate != right.loadInfo.LoadRate {
-		return left.loadInfo.LoadRate < right.loadInfo.LoadRate
+	leftLoad := accountLoadPreferenceRate(left.account, left.loadInfo.LoadRate)
+	rightLoad := accountLoadPreferenceRate(right.account, right.loadInfo.LoadRate)
+	if leftLoad != rightLoad {
+		return leftLoad < rightLoad
 	}
 	if left.loadInfo.WaitingCount != right.loadInfo.WaitingCount {
 		return left.loadInfo.WaitingCount < right.loadInfo.WaitingCount
@@ -1092,6 +1097,17 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		errorRate, ttft, hasTTFT := 0.0, 0.0, false
 		if s.stats != nil {
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
+			if req.ObservationEffortScoped {
+				e := s.stats.attempts.snapshot(priorityRequestAttemptKey(req, account.ID), s.stats.currentTime(), 10, 5)
+				errorRate, ttft, hasTTFT = 0, 0, false
+				if e.Successes+e.Failures >= 5 {
+					errorRate = e.SmoothedRate
+				}
+				if e.LatencySamples >= 5 {
+					ttft = e.LatencyTotalMS / float64(e.LatencySamples)
+					hasTTFT = true
+				}
+			}
 		}
 		scheduledAccount := account
 		candyPreferred := false
@@ -1235,7 +1251,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		if maxPriority > minPriority {
 			priorityFactor = 1 - float64(item.priority-minPriority)/float64(maxPriority-minPriority)
 		}
-		loadFactor := 1 - clamp01(float64(item.loadInfo.LoadRate)/100.0)
+		loadFactor := 1 - clamp01(float64(accountLoadPreferenceRate(item.account, item.loadInfo.LoadRate))/100.0)
 		queueFactor := 1 - clamp01(float64(item.loadInfo.WaitingCount)/float64(maxWaiting))
 		errorFactor := 1 - clamp01(item.errorRate)
 		ttftFactor := 0.5
@@ -1498,8 +1514,10 @@ func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []open
 		if a.account.Priority != b.account.Priority {
 			return a.account.Priority < b.account.Priority
 		}
-		if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
-			return a.loadInfo.LoadRate < b.loadInfo.LoadRate
+		aLoad := accountLoadPreferenceRate(a.account, a.loadInfo.LoadRate)
+		bLoad := accountLoadPreferenceRate(b.account, b.loadInfo.LoadRate)
+		if aLoad != bLoad {
+			return aLoad < bLoad
 		}
 		if a.loadInfo.WaitingCount != b.loadInfo.WaitingCount {
 			return a.loadInfo.WaitingCount < b.loadInfo.WaitingCount
@@ -1892,7 +1910,7 @@ func (s *defaultOpenAIAccountScheduler) loadOpenAIEligibleAccounts(ctx context.C
 		filtered = append(filtered, account)
 		loadReq = append(loadReq, AccountWithConcurrency{
 			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
+			MaxConcurrency: account.Concurrency,
 		})
 	}
 	if len(filtered) == 0 {
@@ -2136,7 +2154,7 @@ func buildOpenAIAccountLoadRequest(accounts []*Account) []AccountWithConcurrency
 		}
 		loadReq = append(loadReq, AccountWithConcurrency{
 			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
+			MaxConcurrency: account.Concurrency,
 		})
 	}
 	return loadReq
@@ -2977,7 +2995,9 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	}
 
+	effort, effortScoped := observationEffort(ctx)
 	return scheduler.Select(ctx, OpenAIAccountScheduleRequest{
+		ObservationEffort: effort, ObservationEffortScoped: effortScoped,
 		GroupID:                 groupID,
 		Platform:                platform,
 		SessionHash:             sessionHash,
@@ -3036,6 +3056,9 @@ func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} 
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport, requestedModels ...string) bool {
+	if account.HasManagedOpenAIConnections() && requiredTransport != OpenAIUpstreamTransportAny && requiredTransport != OpenAIUpstreamTransportHTTPSSE {
+		return false
+	}
 	if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 		return true
 	}
@@ -3407,7 +3430,7 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 		if maxPriority > minPriority {
 			priorityFactor = 1 - float64(candidate.priority-minPriority)/float64(maxPriority-minPriority)
 		}
-		loadFactor := 1 - clamp01(float64(candidate.loadInfo.LoadRate)/100.0)
+		loadFactor := 1 - clamp01(float64(accountLoadPreferenceRate(candidate.account, candidate.loadInfo.LoadRate))/100.0)
 		queueFactor := 1 - clamp01(float64(candidate.loadInfo.WaitingCount)/float64(maxWaiting))
 		errorFactor := 1.0
 		ttftFactor := 0.5
