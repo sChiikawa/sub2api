@@ -1083,6 +1083,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIAdvancedSchedulerEffectiveWeightSessionSticky = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.SessionSticky)
 
 	// 余额、订阅到期与账号限额通知
+	parseBalanceForecastSettings(settings, result)
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		result.BalanceLowNotifyThreshold = v
@@ -1122,6 +1123,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.UsageShowCacheRate = settings[SettingKeyUsageShowCacheRate] != "false"                                      // 默认开启
 	result.UsageShowCacheRateToUsers = settings[SettingKeyUsageShowCacheRateToUsers] == "true"                         // 默认不向用户展示
 	result.UsageShowUpstreamResponseModelToUsers = settings[SettingKeyUsageShowUpstreamResponseModelToUsers] == "true" // 默认不向用户展示
+	result.SmartOpsHiddenMenuItems = parseSmartOpsHiddenMenuItems(settings[SettingKeySmartOpsHiddenMenuItems])
 	result.RequestCaptureEnabled = settings[SettingKeyRequestCaptureEnabled] == "true"
 	result.RequestCaptureQuotaMiB, _ = strconv.ParseInt(settings[SettingKeyRequestCaptureQuotaMiB], 10, 64)
 	if result.RequestCaptureQuotaMiB <= 0 {

@@ -128,6 +128,15 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// json_schema 经 chat 桥原样转成该字段，必须剔除；text / json_object 均可用，
 	// 保持原样。剔除后模型退回纯文本输出，Codex 不依赖结构化输出即可继续。
 	chatBody = stripDeepSeekUnsupportedChatResponseFormat(account, chatBody)
+	chatBody, err = normalizeMistralChatRequest(account, chatBody)
+	if err != nil {
+		writeOpenAIResponsesFallbackError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	if account.Platform == PlatformMistral {
+		reasoningEffort = extractOpenAIReasoningEffortFromBody(chatBody, upstreamModel, billingModel, originalModel)
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, chatBody, upstreamModel)
+	}
 	// Keep the final outbound tier for usage-time reconciliation. A policy
 	// filter that removes the field therefore leaves this nil.
 	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
@@ -175,14 +184,15 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		toolTextDecoder = apicompat.NewDeepSeekToolTextDecoder(chatReq.Tools)
 	}
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, toolTextDecoder)
+		return s.streamChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, toolTextDecoder)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, compact, toolTextDecoder)
+	return s.bufferChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, compact, toolTextDecoder)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	functionTools map[string]bool,
@@ -198,7 +208,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	toolTextDecoder *apicompat.DeepSeekToolTextDecoder,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, writeOpenAIResponsesFallbackError)
+	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, account, writeOpenAIResponsesFallbackError)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +222,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		responsesResp.IncompleteDetails = nil
 		responsesResp.Output = []apicompat.ResponsesOutput{}
 		responsesResp.Error = deepSeekToolTextError(c, requestID, toolTextErr)
+	}
+	if responsesResp.Status != "completed" {
+		usage.CacheReadKnown = false
 	}
 	recordChatReasoningOnlyFailure(c, requestID, upstreamModel, responsesResp)
 	s.cacheReasoningItemsFromOutput(responsesResp.Output)
@@ -277,6 +290,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	functionTools map[string]bool,
@@ -331,7 +345,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		c.Writer.Flush()
 	}
 
-	scan := s.scanCCStream(c, resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+	scan := s.scanCCStream(c, resp, account, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
 		if toolTextDecoder != nil {
 			chunk = toolTextDecoder.Push(chunk)
 		}
@@ -354,6 +368,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 			Stream:                        true,
+			ClientDisconnect:              clientDisconnected,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  scan.FirstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
@@ -382,14 +397,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 			Stream:                        true,
+			ClientDisconnect:              clientDisconnected,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  scan.FirstTokenMs,
 		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
 	finalEvents := apicompat.FinalizeChatCompletionsResponsesStream(state)
+	protectionFailed := false
 	for _, event := range finalEvents {
 		if event.Type == "response.failed" {
+			protectionFailed = true
 			recordChatReasoningOnlyFailure(c, requestID, upstreamModel, event.Response)
 		}
 	}
@@ -407,6 +425,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	if !scan.SawDone {
 		logCCStreamMissingDoneSentinel("openai responses chat fallback", requestID)
 	}
+	if !scan.SawDone || clientDisconnected || protectionFailed {
+		scan.Usage.CacheReadKnown = false
+	}
 
 	return &OpenAIForwardResult{
 		RequestID:                     requestID,
@@ -421,6 +442,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 		ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		Stream:                        true,
+		ClientDisconnect:              clientDisconnected,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  scan.FirstTokenMs,
 	}, nil

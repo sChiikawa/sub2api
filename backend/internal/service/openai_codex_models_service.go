@@ -263,6 +263,7 @@ func loadCodexGroupCatalogAccounts(ctx context.Context, repo AccountRepository, 
 			PlatformDeepseek,
 			PlatformMiniMax,
 			PlatformOpenCodeGo,
+			PlatformMistral,
 		},
 		false,
 	)
@@ -775,6 +776,24 @@ func openaiCodexDisplayName(modelID string) string {
 			return model.DisplayName
 		}
 	}
+	// Legacy models may still be explicitly configured on API-key accounts.
+	switch normalized {
+	case "gpt-5.2":
+		return "GPT-5.2"
+	case "gpt-5.3-codex-spark":
+		return "GPT-5.3 Codex Spark"
+	case "gpt-5.5":
+		return "GPT-5.5"
+	case "gpt-5.4":
+		return "GPT-5.4"
+	case "gpt-5.4-mini":
+		return "GPT-5.4 Mini"
+	case "gpt-image-1":
+		return "GPT Image 1"
+	case "gpt-image-1.5":
+		return "GPT Image 1.5"
+	}
+
 	return modelID
 }
 
@@ -1162,7 +1181,7 @@ func groupCodexModelSupportsImageInput(
 			return false
 		}
 	}
-	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek && platform != PlatformOpenCodeGo {
+	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek && platform != PlatformOpenCodeGo && platform != PlatformMistral {
 		return false
 	}
 
@@ -1301,7 +1320,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		return false
 	}
 	switch account.Platform {
-	case PlatformOpenAI, PlatformDeepseek, PlatformOpenCodeGo:
+	case PlatformOpenAI, PlatformDeepseek, PlatformOpenCodeGo, PlatformMistral:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
 				// Official GPT-6 Astra metadata briefly shipped with a stale
@@ -1314,7 +1333,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 				return stringSliceContains(modalities, "image")
 			}
 		}
-		if strings.EqualFold(strings.TrimSpace(upstreamModel), "deepseek-v4-flash-vision-exp") {
+		if account.Platform != PlatformMistral && strings.EqualFold(strings.TrimSpace(upstreamModel), "deepseek-v4-flash-vision-exp") {
 			return account.Type == AccountTypeAPIKey
 		}
 		if account.Platform != PlatformOpenAI || !isOpenAICodexImageInputModel(upstreamModel) {

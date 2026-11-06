@@ -48,6 +48,8 @@
 
 账号检测、失败处置和自动恢复，请阅读[质量运维](docs/account-quality-operations.md)；BPS OAuth 登录、工具兼容和 403 恢复配置，请阅读[Excel / BPS 协议](docs/excel-bps.md)。
 
+2.19.2 新增默认关闭的账号性能监控，支持指标阈值和独立暂停；启用、人工解除与区域传播边界见[账号性能监控](docs/account-performance-monitor.md)。
+
 已经托管账号或完成部署，想在 Codex 中使用？请阅读[新人入门：使用 Sub2API 接入 Codex](docs/新人入门-使用Sub2API.md)，按步骤创建 API Key、配置 Cockpit Tools 并验证调用。
 
 
@@ -77,8 +79,15 @@ Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的
 - **并发控制** - 用户级、账号级和 API Key 级并发限制，支持可配置的 Key 等待队列
 - **速率限制** - 可配置的请求和 Token 速率限制
 - **内置支付系统** - 支持 EasyPay 易支付、支付宝官方、微信官方、Stripe，用户自助充值，无需独立部署支付服务（[配置指南](docs/PAYMENT_CN.md)）
+- **USDT / USDC 加密货币支付** - 内置 BEpusdt 引擎，无需外部网关 API 或 Token；支持钱包管理、故障补扫、多网络充值与订阅购买，保留外接网关模式和幂等入账（[配置指南](docs/BEPUSDT_PAYMENT.md)）
 - **管理后台** - Web 界面进行监控和管理
 - **外部系统集成** - 支持通过 iframe 嵌入外部系统（如工单等），扩展管理后台功能
+
+### OpenAI API Key 的 UltraFast 档位计费
+
+账号新增/编辑页提供默认关闭的 **UltraFast 档位计费** 开关。开启后，按该账号所有有价 token 模型的上游响应 `service_tier` 结算；`ultrafast` 使用标准单价×6，包含缓存读写，再应用有效账号/分组倍率。响应未返回档位时按请求档位回退，该开关不强制上游加速。
+
+客户端明确请求 `ultrafast` 且最终仍按该档位结算时，关闭此开关也按6倍收费。开关控制是否采用上游响应升档，不豁免客户端请求的 UltraFast 价格。配置字段、响应降档、长上下文和计费范围见 [UltraFast 账号计费说明](docs/openai-ultrafast-billing.md)。
 
 ### Anthropic API Key 客户端模拟与计费
 

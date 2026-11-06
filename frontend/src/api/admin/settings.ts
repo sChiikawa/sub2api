@@ -750,6 +750,9 @@ export interface SystemSettings {
   openai_advanced_scheduler_effective_weight_session_sticky?: string;
 
   // 余额、订阅到期与账号限额通知
+  balance_forecast_enabled: boolean;
+  balance_forecast_threshold_hours: number;
+  balance_forecast_max_notifications: number;
   balance_low_notify_enabled: boolean;
   balance_low_notify_threshold: number;
   balance_low_notify_recharge_url: string;
@@ -795,6 +798,7 @@ export interface SystemSettings {
   usage_show_cache_rate: boolean;
   usage_show_cache_rate_to_users: boolean;
   usage_show_upstream_response_model_to_users: boolean;
+  smart_ops_hidden_menu_items: string[];
   request_capture_enabled: boolean;
   request_capture_quota_mib: number;
   request_capture_retention_days: number;
@@ -1115,6 +1119,9 @@ export interface UpdateSettingsRequest {
   openai_advanced_scheduler_weight_previous_response?: string;
   openai_advanced_scheduler_weight_session_sticky?: string;
   // 余额、订阅到期与账号限额通知
+  balance_forecast_enabled?: boolean;
+  balance_forecast_threshold_hours?: number;
+  balance_forecast_max_notifications?: number;
   balance_low_notify_enabled?: boolean;
   balance_low_notify_threshold?: number;
   balance_low_notify_recharge_url?: string;
@@ -1157,6 +1164,7 @@ export interface UpdateSettingsRequest {
   usage_show_cache_rate?: boolean;
   usage_show_cache_rate_to_users?: boolean;
   usage_show_upstream_response_model_to_users?: boolean;
+  smart_ops_hidden_menu_items?: string[];
   request_capture_enabled?: boolean;
   request_capture_quota_mib?: number;
   request_capture_retention_days?: number;
@@ -1545,6 +1553,27 @@ export async function updateOpenAIResponseHeaderTimeoutSettings(
   return data;
 }
 
+export interface AccountPerformanceSettings {
+  window_minutes: number;
+}
+
+export async function getAccountPerformanceSettings(): Promise<AccountPerformanceSettings> {
+  const { data } = await apiClient.get<AccountPerformanceSettings>(
+    "/admin/settings/account-performance",
+  );
+  return data;
+}
+
+export async function updateAccountPerformanceSettings(
+  settings: AccountPerformanceSettings,
+): Promise<AccountPerformanceSettings> {
+  const { data } = await apiClient.put<AccountPerformanceSettings>(
+    "/admin/settings/account-performance",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Rectifier Settings ====================
 
 /**
@@ -1739,6 +1768,8 @@ export const settingsAPI = {
   updateStreamTimeoutSettings,
   getOpenAIResponseHeaderTimeoutSettings,
   updateOpenAIResponseHeaderTimeoutSettings,
+  getAccountPerformanceSettings,
+  updateAccountPerformanceSettings,
   getRectifierSettings,
   updateRectifierSettings,
   getBetaPolicySettings,
