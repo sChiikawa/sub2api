@@ -96,8 +96,12 @@ assert_unsafe_invocation_rejected url-option -s --url \
 # Every installer release API request must use the scoped helper.
 test "$(grep -c 'github_api_curl .*https://api.github.com/' "$ROOT_DIR/deploy/install.sh")" -eq 3
 
-# Asset and checksum downloads must continue to call curl directly.
-grep -Fq 'curl -sL "$download_url"' "$ROOT_DIR/deploy/install.sh"
-grep -Fq 'curl -sL "$checksum_url"' "$ROOT_DIR/deploy/install.sh"
+# Asset and checksum downloads must continue to call curl directly and anonymously.
+grep -Fq 'curl -fL --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300' "$ROOT_DIR/deploy/install.sh"
+grep -Fq 'curl -fsSL --connect-timeout 10 --max-time 30' "$ROOT_DIR/deploy/install.sh"
+if grep -n 'github_api_curl' "$ROOT_DIR/deploy/install.sh" | grep -Fq 'releases/assets'; then
+    echo "installer would authenticate release asset downloads" >&2
+    exit 1
+fi
 
 echo "install GitHub token checks passed"

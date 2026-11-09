@@ -86,7 +86,7 @@ declare -A MSG_ZH=(
     ["verifying_checksum"]="正在校验文件..."
     ["checksum_verified"]="校验通过"
     ["checksum_failed"]="校验失败"
-    ["checksum_not_found"]="无法验证校验和（checksums.txt 未找到）"
+    ["checksum_not_found"]="无法验证校验和（checksums.txt 未找到或缺少该安装包）"
     ["extracting"]="正在解压..."
     ["binary_installed"]="二进制文件已安装到"
     ["user_exists"]="用户已存在"
@@ -211,7 +211,7 @@ declare -A MSG_EN=(
     ["verifying_checksum"]="Verifying checksum..."
     ["checksum_verified"]="Checksum verified"
     ["checksum_failed"]="Checksum verification failed"
-    ["checksum_not_found"]="Could not verify checksum (checksums.txt not found)"
+    ["checksum_not_found"]="Could not verify checksum (checksums.txt missing or has no entry for this archive)"
     ["extracting"]="Extracting..."
     ["binary_installed"]="Binary installed to"
     ["user_exists"]="User already exists"
@@ -621,12 +621,70 @@ get_current_version() {
     fi
 }
 
+# github.com/releases/download returns 504 for large assets on some edges.
+# The anonymous API asset URL redirects to the blob store that actually serves them.
+github_release_asset_url() {
+    local version=$1
+    local asset_name=$2
+    local release_json asset_url
+
+    release_json=$(curl -fsSL --connect-timeout 10 --max-time 30 \
+        -A "sub2api-install" \
+        "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${version}") || return 1
+    # Pair the asset name with the nearest preceding asset id. GitHub may return
+    # either pretty or compact JSON, with or without a space after the colon.
+    asset_url=$(printf '%s\n' "$release_json" | awk -v name="$asset_name" -v repo="$GITHUB_REPO" '
+        { json = json $0 "\n" }
+        END {
+            needle = "\"name\": \"" name "\""
+            pos = index(json, needle)
+            if (pos == 0) {
+                needle = "\"name\":\"" name "\""
+                pos = index(json, needle)
+            }
+            if (pos == 0) {
+                exit 1
+            }
+            prefix = substr(json, 1, pos)
+            if (match(prefix, /.*releases\/assets\/[0-9]+/)) {
+                id = substr(prefix, RSTART, RLENGTH)
+                sub(/.*releases\/assets\//, "", id)
+                print "https://api.github.com/repos/" repo "/releases/assets/" id
+            }
+        }
+    ')
+    if [ -z "$asset_url" ]; then
+        return 1
+    fi
+    printf '%s\n' "$asset_url"
+}
+
+download_release_asset() {
+    local version=$1
+    local asset_name=$2
+    local dest=$3
+    local asset_url fallback_url
+
+    asset_url=$(github_release_asset_url "$version" "$asset_name") || return 1
+    if curl -fL --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 \
+        -A "sub2api-install" \
+        -H "Accept: application/octet-stream" \
+        -o "$dest" \
+        "$asset_url"; then
+        return 0
+    fi
+
+    fallback_url="https://github.com/${GITHUB_REPO}/releases/download/${version}/${asset_name}"
+    curl -fL --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 \
+        -A "sub2api-install" \
+        -o "$dest" \
+        "$fallback_url"
+}
+
 # Download and extract
 download_and_extract() {
     local version_num=${LATEST_VERSION#v}
     local archive_name="sub2api_${version_num}_${OS}_${ARCH}.tar.gz"
-    local download_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/${archive_name}"
-    local checksum_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/checksums.txt"
 
     print_info "$(msg 'downloading') ${archive_name}..."
 
@@ -634,18 +692,25 @@ download_and_extract() {
     TEMP_DIR=$(mktemp -d)
     trap "rm -rf $TEMP_DIR" EXIT
 
-    # Download archive
-    if ! curl -sL "$download_url" -o "$TEMP_DIR/$archive_name"; then
+    # Download archive. curl -f rejects the 504 HTML page that otherwise
+    # looks like a successful download and fails checksum with an empty expected hash.
+    if ! download_release_asset "$LATEST_VERSION" "$archive_name" "$TEMP_DIR/$archive_name"; then
         print_error "$(msg 'download_failed')"
         exit 1
     fi
 
     # Download and verify checksum
     print_info "$(msg 'verifying_checksum')"
-    if curl -sL "$checksum_url" -o "$TEMP_DIR/checksums.txt" 2>/dev/null; then
-        local expected_checksum=$(grep "$archive_name" "$TEMP_DIR/checksums.txt" | awk '{print $1}')
-        local actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
+    if download_release_asset "$LATEST_VERSION" "checksums.txt" "$TEMP_DIR/checksums.txt"; then
+        local expected_checksum
+        local actual_checksum
+        expected_checksum=$(grep -F "$archive_name" "$TEMP_DIR/checksums.txt" | awk '{print $1}')
+        actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
 
+        if [ -z "$expected_checksum" ]; then
+            print_error "$(msg 'checksum_not_found')"
+            exit 1
+        fi
         if [ "$expected_checksum" != "$actual_checksum" ]; then
             print_error "$(msg 'checksum_failed')"
             print_error "Expected: $expected_checksum"
