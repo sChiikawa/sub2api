@@ -73,23 +73,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		}
 		return resp, err
 	}
-	var dressErr error
-	request, dressErr = s.dressSharedAstraBusinessRequest(request, account)
-	if dressErr != nil {
-		return nil, dressErr
-	}
 	request = s.stickBoundCodexTicketRequest(request, account)
-	s.overlayAccountGatewayCookie(request, account)
-	gatewayModel := openAIRequestModel(request)
-	if s.shouldRotateCodexOAuthGateway(request.Context(), account, gatewayModel) {
-		request.Header.Del(openAICodexTurnStateHeader)
-	}
-	gatewayCookie := request.Header.Get("Cookie")
-	gatewayHost := ""
-	if s.shouldRotateCodexOAuthGateway(request.Context(), account, gatewayModel) {
-		gatewayHost = codex780CookieGatewayHost(strings.Split(gatewayCookie, "; "))
-	}
-	candyHeaders := request.Header.Clone()
 	boundTicket := s.codexTicketRequestBound(request, account)
 	observationTicket := s.boundCodexTicket(request, account)
 	observationHeaders := request.Header.Clone()
@@ -109,15 +93,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			releaseChat()
 			if observe {
 				s.observeScheduledAstraCandy(request.Context(), observationHeaders, account, observationTicket)
-				s.observeGatewayRotationCandy(request.Context(), candyHeaders, account, gatewayHost, gatewayCookie)
 			}
 		})
 	}()
 	defer func() {
-		if result != nil {
-			s.noteBusinessGatewayCookie(account, openAIRequestModel(request), result)
-		}
-		s.noteBusinessGatewayOverload(request.Context(), account, openAIRequestModel(request), result)
 		if resultErr == nil {
 			// Fast admission may have installed the ticket inside the upstream
 			// adapter. Capture the binding before observation can revoke it.
@@ -147,8 +126,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	return s.doUpstreamWithProxyFallback(request.Context(), request, account, proxyURL)
 }
 
-// doOpenAIAccountTestUpstream sends account, Pelican, and IQ tests with the
-// rotating gateway cookie and without a harvested ticket.
+// doOpenAIAccountTestUpstream applies the same stored ticket and transport lifecycle
+// as production forwarding. Use the final payload model, after mapping/normalization;
+// a self-harvested ticket must not depend on membership in the gateway-reuse target list.
 func (s *AccountTestService) doOpenAIAccountTestUpstream(
 	request *http.Request,
 	proxyURL string,
@@ -157,11 +137,17 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 	body []byte,
 ) (*http.Response, error) {
 	gateway := s.openaiGatewayService
-	if gateway != nil {
-		gateway.overlayAccountGatewayCookie(request, account)
-		if gateway.shouldRotateCodexOAuthGateway(request.Context(), account, extractOpenAICodexTicketModel(body)) {
-			request.Header.Del(openAICodexTurnStateHeader)
+	model := extractOpenAICodexTicketModel(body)
+	if gateway != nil && !IsAstraSourceAcquisition(request.Context()) && request.URL != nil && request.URL.String() == chatgptCodexAPIURL &&
+		isOpenAICodexTicketAccount(account, model) && gateway.openAICodexTicketEnabledContext(request.Context()) &&
+		gateway.openAICodexTicketGatedModel(model) {
+		if err := gateway.applyOpenAICodexTicket(request.Context(), account, model, request.Header, "sse"); err != nil {
+			return nil, err
 		}
+		// This restores the complete cookie/egress bundle, holds it until body close,
+		// observes replacements and enforces the configured strict response policy.
+		request = request.WithContext(context.WithValue(request.Context(), astraCandySkipObservationKey{}, true))
+		return gateway.doOpenAIUpstream(request, proxyURL, account)
 	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)

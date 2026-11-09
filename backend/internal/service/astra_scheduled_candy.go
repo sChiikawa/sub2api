@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,23 +14,14 @@ import (
 
 type astraCandySkipObservationKey struct{}
 
-// Observe after the business stream releases its exit. The verdict only feeds
-// source-ticket lending; routing, ticket observation, account state and
-// scheduling never see it. Capacity pressure drops this optional beta
-// observation instead of delaying a business request.
+// Observe after the business stream releases its exit. No verdict is returned
+// to routing, ticket observation, account state or scheduling. Capacity pressure
+// drops this optional beta observation instead of delaying a business request.
 func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, headers http.Header, account *Account, ticket *openAICodexTicket) {
 	if skip, _ := ctx.Value(astraCandySkipObservationKey{}).(bool); skip {
 		return
 	}
 	if s.settingService == nil || account == nil || ticket == nil || ticket.Model != OpenAICodexStateProbeDefaultModel || ticket.Length != 780 || ticket.Transport != "sse" || !ticket.valid(time.Now(), 780) || IsOpenAICodexStateProbeRequest(ctx) {
-		return
-	}
-	// A ticket borrowed from another account was already candy-checked before it
-	// could be injected. Do not re-test it under the borrower's identity.
-	if ticket.AccountID > 0 && ticket.AccountID != account.ID {
-		return
-	}
-	if _, tested := s.astraCandyVerdictFor(account.ID, ticket); tested {
 		return
 	}
 	copy := *ticket
@@ -71,197 +60,46 @@ func (s *OpenAIGatewayService) observeScheduledAstraCandy(ctx context.Context, h
 			s.astraCandyMu.Unlock()
 			return
 		}
-		reason, detail := s.runScheduledAstraCandy(probeCtx, h, id, &copy)
-		s.recordAstraCandyVerdict(id, &copy, reason)
+		reason := s.runScheduledAstraCandy(probeCtx, h, id, &copy)
 		kind := "candy_fail"
 		if reason == "candy_passed" {
 			kind = "candy_pass"
 		}
-		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: copy.Model, Reason: reason, Result: reason, Detail: candyFlowDetail(reason, detail)})
+		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: copy.Model, Reason: reason, Result: reason, Detail: reason})
 	}()
-}
-
-const (
-	gatewayCandyModel           = "gpt-6-astra"
-	gatewayCandyReasoningEffort = "low"
-)
-
-// observeGatewayRotationCandy asks the gateway just used by a business request
-// one Beta candy question on gpt-6-astra at reasoning effort low. A wrong
-// answer or any request error skips that gateway for this account. The
-// business response is never delayed or replayed.
-
-func (s *OpenAIGatewayService) observeGatewayRotationCandy(ctx context.Context, headers http.Header, account *Account, host, cookie string) {
-	if s == nil || s.settingService == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || !s.settingService.CodexGatewayCandyCheck(ctx) {
-		return
-	}
-	s.queueGatewayCandyProbe(ctx, headers, account, host, cookie)
-}
-
-// queueGatewayCandyProbe starts one gateway candy probe when a worker is free.
-// It returns false when both workers are already busy.
-func (s *OpenAIGatewayService) queueGatewayCandyProbe(ctx context.Context, headers http.Header, account *Account, host, cookie string) bool {
-	if s == nil || account == nil || host == "" || strings.TrimSpace(cookie) == "" || headers == nil {
-		return true
-	}
-	if s.gatewayCandyAlreadyTested(account.ID, host) {
-		return true
-	}
-	model := gatewayCandyModel
-	key := strconv.FormatInt(account.ID, 10) + "\x00" + host
-	s.astraCandyMu.Lock()
-	if s.gatewayCandyRunning >= 2 {
-		s.astraCandyMu.Unlock()
-		return false
-	}
-	if s.gatewayCandyInflight == nil {
-		s.gatewayCandyInflight = map[string]struct{}{}
-	}
-	if _, running := s.gatewayCandyInflight[key]; running {
-		s.astraCandyMu.Unlock()
-		return true
-	}
-	s.gatewayCandyInflight[key] = struct{}{}
-	s.gatewayCandyRunning++
-	s.astraCandyMu.Unlock()
-	h := headers.Clone()
-	id, name := account.ID, account.Name
-	go func() {
-		defer func() {
-			s.astraCandyMu.Lock()
-			s.gatewayCandyRunning--
-			delete(s.gatewayCandyInflight, key)
-			s.astraCandyMu.Unlock()
-		}()
-		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
-		defer cancel()
-		reason, detail := s.runGatewayCandy(probeCtx, h, id, model, cookie)
-		kind := "candy_fail"
-		if reason == "candy_passed" {
-			kind = "candy_pass"
-		}
-		recordCodexHarvestFlow(CodexHarvestFlowEvent{Stage: "select", Kind: kind, AccountID: id, AccountName: name, Model: model, Node: host, Reason: reason, Result: reason, Detail: candyFlowDetail(reason, detail)})
-		if reason == "candy_disabled" || reason == "candy_unavailable" || reason == "candy_stale" || reason == "candy_busy" {
-			return
-		}
-		expires := s.gatewayCookieExpires(host, cookie)
-		passed := reason == "candy_passed"
-		s.markGatewayCandyTestedThisRound(id, host)
-		s.noteGatewayCandyTested(id, host, expires, passed)
-		if passed {
-			return
-		}
-		s.skipAccountGateway(&Account{ID: id, Name: name}, model, reason)
-	}()
-	return true
-}
-
-func (s *OpenAIGatewayService) gatewayCookieExpires(host, cookie string) time.Time {
-	if s == nil || host == "" {
-		return time.Time{}
-	}
-	want := strings.Split(strings.TrimSpace(cookie), "; ")
-	s.astraGatewayMu.Lock()
-	defer s.astraGatewayMu.Unlock()
-	var exact, hostExpires time.Time
-	now := time.Now()
-	for _, slot := range s.astraGatewaySlots {
-		if slot.Host != host || !gatewaySlotActive(slot, now) {
-			continue
-		}
-		if hostExpires.IsZero() || slot.ExpiresAt.After(hostExpires) {
-			hostExpires = slot.ExpiresAt
-		}
-		if slices.Equal(slot.Cookies, want) && (exact.IsZero() || slot.ExpiresAt.After(exact)) {
-			exact = slot.ExpiresAt
-		}
-	}
-	if !exact.IsZero() {
-		return exact
-	}
-	if !hostExpires.IsZero() {
-		return hostExpires
-	}
-	return now.Add(astraGatewayCookieTTL)
-}
-
-func (s *OpenAIGatewayService) runGatewayCandy(ctx context.Context, headers http.Header, id int64, model, cookie string) (string, string) {
-	if s.settingService == nil || !s.gatewayCandyProbeEnabled(ctx) {
-		return "candy_disabled", ""
-	}
-	if s.accountRepo == nil || s.httpUpstream == nil {
-		return "candy_unavailable", ""
-	}
-	account, err := s.accountRepo.GetByID(ctx, id)
-	if err != nil || account == nil || headers.Get("Authorization") == "" || !s.openAICodexTicketEnabledContext(ctx) {
-		return "candy_stale", ""
-	}
-	if headers.Get("ChatGPT-Account-ID") != "" && headers.Get("ChatGPT-Account-ID") != account.GetCredential("chatgpt_account_id") {
-		return "candy_stale", ""
-	}
-	if headers.Get("ChatGPT-Account-ID") == "" {
-		setOpenAIChatGPTAccountHeaders(headers, account)
-	}
-	if cleaned := gatewayRouteCookie(http.Header{"Cookie": []string{cookie}}); cleaned != "" {
-		cookie = cleaned
-	}
-	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, gatewayCandyReasoningEffort, func(req *http.Request) (*http.Response, error) {
-		return s.httpUpstream.Do(req, openAIAccountProxyURL(account), account.ID, account.Concurrency)
-	})
-	return classifyCandyShot(ctx, err, shot, model, "")
-}
-
-func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket) (string, string) {
-	return s.runAstraCandy(ctx, headers, id, ticket, s.settingService.CodexTicketCandyObservation)
 }
 
 // Exactly one SSE request with the captured account/ticket/cookies and its own
 // lease for the recorded exit. Never pass the result through ticket response
-// observation, cooldown handling, harvest persistence or failover. enabled is
-// checked again after waiting for the exit lease.
-func (s *OpenAIGatewayService) runAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket, enabled func(context.Context) bool) (string, string) {
-	if !enabled(ctx) {
-		return "candy_disabled", ""
+// observation, cooldown handling, harvest persistence or failover.
+func (s *OpenAIGatewayService) runScheduledAstraCandy(ctx context.Context, headers http.Header, id int64, ticket *openAICodexTicket) string {
+	if !s.settingService.CodexTicketCandyObservation(ctx) {
+		return "candy_disabled"
 	}
 	if s.accountRepo == nil || s.httpUpstream == nil {
-		return "candy_unavailable", ""
+		return "candy_unavailable"
 	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil || !astraTicketAccountEligible(ctx, account) || !ticketIdentityMatches(account, ticket) || headers.Get("Authorization") == "" || headers.Get("ChatGPT-Account-ID") != account.GetCredential("chatgpt_account_id") || !s.openAICodexTicketEnabledContext(ctx) {
-		return "candy_stale", ""
+		return "candy_stale"
 	}
 	proxy, release, err := s.pinStoredCodexTicketEgress(ctx, ticket, openAIAccountProxyURL(account))
 	if err != nil {
 		release()
-		return "candy_unavailable", ""
+		return "candy_unavailable"
 	}
 	defer release()
-	if !enabled(ctx) {
-		return "candy_disabled", ""
+	if !s.settingService.CodexTicketCandyObservation(ctx) {
+		return "candy_disabled"
 	}
 	if !ticket.valid(time.Now(), 780) {
-		return "candy_stale", ""
+		return "candy_stale"
 	}
 	routeChanged := false
-	// Use the gateway cookie from the business request that just succeeded.
-	// Re-resolving the account turn can see a prefetch rotation and send a
-	// different cookie, or none, which the upstream rejects.
-	cookie := gatewayRouteCookie(headers)
-	if cookie == "" {
-		if slot, _ := s.currentAccountGateway(account, ticket.Model, time.Now()); slot != nil {
-			cookie = strings.Join(slot.Cookies, "; ")
-		}
-	}
-	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, "", cookie, "只输出最终答案数字，不要解释。", CandyPrompt, "", func(req *http.Request) (*http.Response, error) {
+	shot, err := fireOpenAICodexPromptShotRequest(ctx, headers, ticket.Model, ticket.State, strings.Join(ticket.HarvestCookies, "; "), "只输出最终答案数字，不要解释。", CandyPrompt, func(req *http.Request) (*http.Response, error) {
 		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(context.WithValue(req.Context(), boundAstraTicketContextKey{}, true)))
 		restoreBoundCodexTicketHarvestIdentity(req.Header, ticket)
 		pinBoundCodexTicketHarvestIdentityRequestBody(req, ticket)
-		req.Header.Del(openAICodexTurnStateHeader)
-		if cookie != "" {
-			req.Header.Set("Cookie", cookie)
-		} else {
-			req.Header.Del("Cookie")
-		}
 		resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 		if resp != nil {
 			expected := req.Cookies()
@@ -275,74 +113,22 @@ func (s *OpenAIGatewayService) runAstraCandy(ctx context.Context, headers http.H
 		}
 		return resp, err
 	})
-	reason, detail := classifyCandyShot(ctx, err, shot, ticket.Model, ticket.State)
-	if routeChanged && reason != "candy_error" && reason != "candy_timeout" {
-		return "candy_route_changed", ""
-	}
-	return reason, detail
-}
-
-func classifyCandyShot(ctx context.Context, err error, shot openAICodexStateShot, model, previousState string) (string, string) {
 	switch {
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
-		return "candy_timeout", ""
+		return "candy_timeout"
 	case err != nil || shot.status != http.StatusOK || shot.streamErr != nil:
-		return "candy_error", candyShotDetail(shot, err)
-	case shot.state != "" && previousState != "" && shot.state != previousState:
-		return "candy_ticket_changed", ""
-	case shot.model != "" && shot.model != model:
-		return "candy_model_mismatch", ""
-	case model != "" && shot.model == "" && previousState != "":
-		return "candy_model_mismatch", ""
+		return "candy_error"
+	case routeChanged:
+		return "candy_route_changed"
+	case shot.state != "" && shot.state != ticket.State:
+		return "candy_ticket_changed"
+	case shot.model != ticket.Model:
+		return "candy_model_mismatch"
 	case !CandyAnswerCorrect(shot.answer):
-		return "candy_incorrect", ""
+		return "candy_incorrect"
 	default:
-		return "candy_passed", ""
+		return "candy_passed"
 	}
-}
-
-func candyShotDetail(shot openAICodexStateShot, err error) string {
-	switch {
-	case err != nil:
-		return SanitizeUpstreamErrorMessage(truncateString(err.Error(), openAICodexStateProbeMaxDetailByte))
-	case shot.status != http.StatusOK:
-		if shot.detail != "" {
-			return "HTTP " + strconv.Itoa(shot.status) + ": " + shot.detail
-		}
-		return "HTTP " + strconv.Itoa(shot.status)
-	case shot.streamErr != nil && shot.detail != "":
-		return shot.streamErr.Error() + ": " + shot.detail
-	case shot.streamErr != nil:
-		return shot.streamErr.Error()
-	default:
-		return ""
-	}
-}
-
-func candyFlowDetail(reason, detail string) string {
-	if strings.TrimSpace(detail) == "" {
-		return reason
-	}
-	return detail
-}
-
-func gatewayRouteCookie(headers http.Header) string {
-	if headers == nil {
-		return ""
-	}
-	parts := strings.Split(headers.Get("Cookie"), ";")
-	cookies := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			cookies = append(cookies, part)
-		}
-	}
-	pair, host := astraRouteCookiePair(cookies)
-	if host == "" {
-		return ""
-	}
-	return strings.Join(pair, "; ")
 }
 
 func astraCandyStreamAnswer(data []byte) string {

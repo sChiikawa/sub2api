@@ -5,11 +5,10 @@ import (
 	"fmt"
 )
 
-// Fail-closed ticket admission needs credentials and persisted tickets that
-// sched:meta deliberately omits. Hydrate only gated candidates, before TopK
-// filtering; looking solely at the metadata would reject even a valid
-// warm-memory ticket because its identity cannot match the stripped
-// credentials.
+// Ticket admission needs credentials and persisted tickets that sched:meta
+// deliberately omits. Hydrate only gated candidates, before TopK filtering;
+// looking solely at the metadata would reject even a valid warm-memory ticket
+// because its identity cannot match the stripped credentials.
 func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	ctx context.Context, groupID *int64, platform, requestedModel string,
 	requireCompact bool, excludedIDs map[int64]struct{},
@@ -18,10 +17,7 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	if err != nil || s.schedulerSnapshot == nil || len(accounts) == 0 {
 		return accounts, err
 	}
-	if !s.openAICodexTicketEnabledContext(ctx) {
-		return accounts, nil
-	}
-	if !s.openAICodexTicketConfig().FailClosed {
+	if !s.openAICodexTicketEnabledContext(ctx) || !s.openAICodexTicketConfig().FailClosed {
 		return accounts, nil
 	}
 	ids := make([]int64, 0, len(accounts))
@@ -55,12 +51,8 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForRequest(
 	for i := range accounts {
 		account := &accounts[i]
 		if _, needed := hydrate[account.ID]; needed {
-			hydrated := full[account.ID]
-			if hydrated == nil {
-				continue
-			}
-			account = hydrated
-			if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
+			account = full[account.ID]
+			if account == nil || !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 				continue
 			}
 		}

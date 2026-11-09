@@ -61,7 +61,6 @@ func unifiedAstraFixture(t *testing.T) (*OpenAIGatewayService, *astraTicketRepo,
 	now := time.Now().Add(-5 * time.Second)
 	seed := &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: mint780State(now), Length: 780, Blocks: 33, IssuedAt: now, CapturedAt: now, ExpiresAt: now.Add(240 * time.Second), ProbeVerified: true, Transport: "sse", Gateway: "unified-42", HarvestCookies: mint780Pair(time.Now().Add(time.Hour), "unified-42"), HarvestProxyURL: "http://source.invalid:8080"}
 	require.NoError(t, s.storeOpenAICodexTicket(t.Context(), a, seed))
-	s.recordAstraCandyVerdict(1, seed, "candy_passed")
 	repo.writes = 0
 	return s, repo, seed
 }
@@ -75,53 +74,114 @@ func targetTicketHeaders() http.Header {
 	return h
 }
 
-func TestUnifiedAstraVerifyDoesNotMintBorrowedTicket(t *testing.T) {
+func TestUnifiedAstraReusePersistsTargetBundleAndUsesItWithoutReprobing(t *testing.T) {
 	s, repo, seed := unifiedAstraFixture(t)
+	targetState := mint780State(time.Now().Add(-time.Second))
 	calls := 0
-	s.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
+	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
 		calls++
-		t.Fatal("verification must not harvest a borrowed ticket onto the account")
-		return nil, nil
+		require.Equal(t, "http://source.invalid:8080", proxy)
+		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
+		require.Equal(t, "target-workspace", req.Header.Get("ChatGPT-Account-ID"))
+		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
+		require.True(t, IsOpenAICodexStateProbeRequest(req.Context()))
+		h := http.Header{}
+		if calls == 1 {
+			require.Equal(t, seed.State, req.Header.Get(openAICodexTurnStateHeader))
+			h.Set(openAICodexTurnStateHeader, targetState)
+		} else {
+			require.Equal(t, targetState, req.Header.Get(openAICodexTurnStateHeader))
+		}
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
-	resetCodexHarvestFlow()
 	require.NoError(t, s.VerifyStoredAstraTarget(t.Context(), 2))
-	require.NoError(t, s.VerifyStoredAstraTarget(t.Context(), 2))
-	require.Zero(t, calls)
-	require.Zero(t, repo.writes)
-	for _, event := range listCodexHarvestFlowEvents() {
-		require.NotEqual(t, "borrow", event.Kind)
-	}
-	account, _ := repo.GetByID(t.Context(), 2)
-	require.False(t, s.lookupOpenAICodexTicket(account, "gpt-6-astra").valid(time.Now(), 780))
 	h := targetTicketHeaders()
 	proxy, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
 	require.NoError(t, err)
+	require.True(t, s.codexTicketChatHeld(2))
 	release()
-	require.Empty(t, proxy)
-	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
+	require.False(t, s.codexTicketChatHeld(2))
+	require.Equal(t, 2, calls)
+	require.Equal(t, 1, repo.writes)
+	require.Equal(t, "http://source.invalid:8080", proxy)
+	require.Equal(t, targetState, h.Get(openAICodexTurnStateHeader))
 	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
-	require.Equal(t, "Bearer target-token", h.Get("Authorization"))
+	a, _ := repo.GetByID(t.Context(), 2)
+	ticket := s.lookupOpenAICodexTicket(a, "gpt-6-astra")
+	require.Equal(t, "reuse", ticket.Acquisition)
+	require.Equal(t, int64(1), ticket.SourceAccountID)
+	require.True(t, ticketIdentityMatches(a, ticket))
+	require.NotEqual(t, seed.State, ticket.State)
+	// A fresh service recovers exactly the same material from persistence.
+	restarted := ticketTestService(t, s.openAICodexTicketConfig(), nil)
+	restarted.accountRepo = repo
+	restarted.cfg.Gateway.CodexGatewayPin = s.cfg.Gateway.CodexGatewayPin
+	h = targetTicketHeaders()
+	_, release, err = restarted.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
+	require.NoError(t, err)
+	release()
+	require.Equal(t, targetState, h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, 2, calls)
 	require.True(t, astraAccountSchedulingReady(s.cfg.AstraRouting(t.Context()), s.StoredAstraSnapshot(t.Context()), 2, time.Now()))
 	public, err := json.Marshal(s.StoredAstraSnapshot(t.Context()))
 	require.NoError(t, err)
-	for _, secret := range []string{seed.State, "source-token", "target-token", "source.invalid"} {
+	for _, secret := range []string{targetState, seed.State, "source-token", "target-token", "source.invalid"} {
 		require.NotContains(t, string(public), secret)
 	}
 }
 
-func TestUnifiedAstraVerifyStopsWhenAccountIsNotABorrower(t *testing.T) {
-	s, repo, _ := unifiedAstraFixture(t)
-	calls := 0
-	s.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
-		calls++
-		t.Fatal("leaving the borrower set must not start a harvest")
-		return nil, nil
-	}}
-	s.cfg.Gateway.CodexGatewayPin.TargetAccountIDs = nil
-	err := s.VerifyStoredAstraTarget(t.Context(), 2)
-	require.EqualError(t, err, "configuration_changed")
-	require.Zero(t, calls)
-	require.Zero(t, repo.writes)
+func TestUnifiedAstraReuseRejectsUnverifiedOrUnpersistedTarget(t *testing.T) {
+	for _, kind := range []string{"echo_source", "reissued_target", "changed_route", "incomplete", "unauthorized", "persist", "cancel", "identity_change", "configuration_change"} {
+		t.Run(kind, func(t *testing.T) {
+			s, repo, seed := unifiedAstraFixture(t)
+			calls := 0
+			target := mint780State(time.Now().Add(-time.Second))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if kind == "persist" {
+				repo.err = errors.New("private database detail")
+			}
+			s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {
+				calls++
+				h := http.Header{}
+				status := 200
+				body := harvestProbeCompleteFixture("gpt-6-astra")
+				if calls == 1 {
+					h.Set(openAICodexTurnStateHeader, target)
+					if kind == "echo_source" {
+						h.Set(openAICodexTurnStateHeader, seed.State)
+					}
+				}
+				if kind == "unauthorized" {
+					status = 401
+				}
+				if calls == 2 {
+					switch kind {
+					case "reissued_target":
+						h.Set(openAICodexTurnStateHeader, mint780State(time.Now().Add(-2*time.Second)))
+					case "changed_route":
+						h["Set-Cookie"] = mint780Pair(time.Now().Add(time.Hour), "unified-43")
+					case "incomplete":
+						body = "data: {\"type\":\"response.created\"}\n\n"
+					case "cancel":
+						cancel()
+					case "identity_change":
+						repo.accounts[2].Credentials = map[string]any{"access_token": "other", "chatgpt_account_id": "other"}
+					case "configuration_change":
+						s.cfg.Gateway.CodexGatewayPin.TargetAccountIDs = nil
+					}
+				}
+				return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
+			}}
+			err := s.VerifyStoredAstraTarget(ctx, 2)
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), "private")
+			require.LessOrEqual(t, calls, 2)
+			require.Zero(t, repo.writes)
+			a, _ := repo.GetByID(t.Context(), 2)
+			require.False(t, s.lookupOpenAICodexTicket(a, "gpt-6-astra").valid(time.Now(), 780))
+		})
+	}
 }
 
 func TestUnifiedAstraReuseBudgetAndProtocol(t *testing.T) {
@@ -134,7 +194,7 @@ func TestUnifiedAstraReuseBudgetAndProtocol(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
 	_, _, err := s.ApplyStoredAstraTarget(t.Context(), targetTicketHeaders(), 2, "websocket")
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.Zero(t, calls)
 	left := 1
 	a, _ := repo.GetByID(t.Context(), 2)
@@ -158,7 +218,7 @@ func TestUnifiedAstraSourceBootstrapUsesSameStoreAndBudget(t *testing.T) {
 	s, repo, _ := unifiedAstraFixture(t)
 	s.openaiCodexTickets.Delete(openAICodexTicketKey(1, "gpt-6-astra"))
 	repo.accounts[1].Extra = nil
-	s.cfg.Gateway.OpenAICodexTicket.MaxProbesPerRound = 3
+	s.cfg.Gateway.OpenAICodexTicket.MaxProbesPerRound = 2
 	calls := 0
 	state := mint780State(time.Now())
 	cookies := mint780Pair(time.Now().Add(time.Hour), "unified-77")
@@ -167,120 +227,23 @@ func TestUnifiedAstraSourceBootstrapUsesSameStoreAndBudget(t *testing.T) {
 		require.Equal(t, "Bearer source-token", req.Header.Get("Authorization"))
 		require.Equal(t, "http://self.invalid:8080", proxy)
 		h := http.Header{}
-		body := harvestProbeCompleteFixture("gpt-6-astra")
-		switch calls {
-		case 1:
+		if calls == 1 {
 			require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
 			h.Set(openAICodexTurnStateHeader, state)
 			h["Set-Cookie"] = cookies
-		case 2:
+		} else {
 			require.Equal(t, state, req.Header.Get(openAICodexTurnStateHeader))
-		default:
-			require.Equal(t, state, req.Header.Get(openAICodexTurnStateHeader))
-			require.Equal(t, "source-workspace", req.Header.Get("ChatGPT-Account-ID"))
-			raw, _ := io.ReadAll(req.Body)
-			require.Contains(t, string(raw), CandyPrompt[:24], "the new source ticket is candy-checked before lending")
-			body = candyStream("21")
 		}
-		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
 	require.NoError(t, s.PrepareStoredAstraSources(t.Context()))
-	require.Equal(t, 3, calls)
-	require.Equal(t, 2, repo.writes, "ticket and probe summary are separate existing writes; the candy verdict is not persisted")
-	_, donor := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", nil)
+	require.Equal(t, 2, calls)
+	require.Equal(t, 2, repo.writes, "ticket and probe summary are separate existing writes")
+	_, donor := s.storedAstraDonor(t.Context(), 2)
 	require.Equal(t, state, donor.State)
 	require.Equal(t, "self", donor.Acquisition)
 	require.NoError(t, s.PrepareStoredAstraSources(t.Context()))
-	require.Equal(t, 3, calls, "ready source must not be recollected or re-checked")
-}
-
-func TestUnifiedAstraLendsOnlyCandyPassedSourceTickets(t *testing.T) {
-	for _, answer := range []string{"21", "20"} {
-		t.Run(answer, func(t *testing.T) {
-			s, repo, seed := unifiedAstraFixture(t)
-			s.astraCandyVerdicts = nil
-			calls := 0
-			s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {
-				calls++
-				require.Equal(t, 1, calls, "an untested donor costs exactly one candy request, then no borrow on failure")
-				require.Equal(t, "Bearer source-token", req.Header.Get("Authorization"))
-				require.Equal(t, seed.State, req.Header.Get(openAICodexTurnStateHeader))
-				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(candyStream(answer)))}, nil
-			}}
-			_, donor := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", nil)
-			require.Nil(t, donor, "without a reserve no candy request is sent")
-			require.Zero(t, calls)
-			reserved := 0
-			_, donor = s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", func() bool { reserved++; return true })
-			require.Equal(t, 1, reserved)
-			require.Equal(t, answer == "21", donor != nil)
-			_, again := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", func() bool { reserved++; return true })
-			require.Equal(t, 1, calls, "the verdict is reused for the ticket lifetime")
-			require.Equal(t, answer == "21", again != nil)
-			snapshot := s.StoredAstraSnapshot(t.Context())
-			if answer == "21" {
-				require.Equal(t, "source_passed_pending_target", snapshot.Sources[0].Reason)
-			} else {
-				require.Equal(t, "source_candy_failed", snapshot.Sources[0].Reason)
-			}
-			require.Zero(t, repo.writes)
-		})
-	}
-}
-
-func TestUnifiedAstraCandyBudgetRefusalLeavesTicketUntested(t *testing.T) {
-	s, _, _ := unifiedAstraFixture(t)
-	s.astraCandyVerdicts = nil
-	s.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
-		t.Fatal("refused budget must not send a candy request")
-		return nil, nil
-	}}
-	_, donor := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", func() bool { return false })
-	require.Nil(t, donor)
-	require.Equal(t, "source_candy_pending", s.StoredAstraSnapshot(t.Context()).Sources[0].Reason)
-}
-
-func TestUnifiedAstraLendsCandyPassedSelfTicketsOfOtherBorrowers(t *testing.T) {
-	s, repo, _ := unifiedAstraFixture(t)
-	member := ticketTestAccount(3)
-	member.Credentials = map[string]any{"access_token": "member-token", "chatgpt_account_id": "member-workspace"}
-	repo.accounts[3] = member
-	s.cfg.Gateway.CodexGatewayPin.TargetAccountIDs = []int64{2, 3}
-	issued := time.Now().Add(-2 * time.Second)
-	own := &openAICodexTicket{Acquisition: "self", AccountID: 3, Model: "gpt-6-astra", State: mint780State(issued), Length: 780, Blocks: 33, IssuedAt: issued, CapturedAt: issued, ExpiresAt: issued.Add(240 * time.Second), ProbeVerified: true, Transport: "sse", Gateway: "unified-43", HarvestCookies: mint780Pair(time.Now().Add(time.Hour), "unified-43"), HarvestProxyURL: "http://member.invalid:8080"}
-	require.NoError(t, s.storeOpenAICodexTicket(t.Context(), member, own))
-
-	donor, _ := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", nil)
-	require.Equal(t, int64(1), donor.ID, "a passed source ticket is preferred")
-
-	repo.accounts[1].Status = StatusDisabled
-	calls := 0
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {
-		calls++
-		require.Equal(t, "Bearer member-token", req.Header.Get("Authorization"))
-		require.Equal(t, own.State, req.Header.Get(openAICodexTurnStateHeader))
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(candyStream("21")))}, nil
-	}}
-	_, ticket := s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", nil)
-	require.Nil(t, ticket, "an untested borrower ticket is not lent")
-	donor, ticket = s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", func() bool { return true })
-	require.Equal(t, 1, calls)
-	require.Equal(t, int64(3), donor.ID)
-	require.Equal(t, own.State, ticket.State)
-	donor, _ = s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", nil)
-	require.Equal(t, int64(3), donor.ID, "the verdict is reused")
-	_, ticket = s.storedAstraDonor(t.Context(), 3, "gpt-6-astra", nil)
-	require.Nil(t, ticket, "an account never borrows its own ticket")
-
-	s.openaiCodexTickets.Delete(openAICodexTicketKey(3, "gpt-6-astra"))
-	repo.accounts[3].Extra = nil
-	borrowed := *own
-	borrowed.State, borrowed.Acquisition, borrowed.SourceAccountID = mint780State(issued.Add(time.Second)), "reuse", 1
-	require.NoError(t, s.storeOpenAICodexTicket(t.Context(), repo.accounts[3], &borrowed))
-	s.recordAstraCandyVerdict(3, &borrowed, "candy_passed")
-	_, ticket = s.storedAstraDonor(t.Context(), 2, "gpt-6-astra", func() bool { return true })
-	require.Nil(t, ticket, "a borrowed ticket is never lent on")
-	require.Equal(t, 1, calls)
+	require.Equal(t, 2, calls, "ready source must not be recollected")
 }
 
 func TestUnifiedAstraObservesTicketInstalledOnClonedBusinessRequest(t *testing.T) {
@@ -319,8 +282,8 @@ func TestUnifiedAstraOwnTicketWinsAndHarvestLockPreventsDuplicateAcquisition(t *
 	s, repo, seed := unifiedAstraFixture(t)
 	s.codexHarvestRunMu.Lock()
 	err := s.VerifyStoredAstraTarget(t.Context(), 2)
+	require.EqualError(t, err, "target_validation_in_progress")
 	s.codexHarvestRunMu.Unlock()
-	require.NoError(t, err)
 	account, _ := repo.GetByID(t.Context(), 2)
 	own := *seed
 	own.AccountID = 2
@@ -331,249 +294,116 @@ func TestUnifiedAstraOwnTicketWinsAndHarvestLockPreventsDuplicateAcquisition(t *
 	own.HarvestCookies = mint780Pair(time.Now().Add(time.Hour), "unified-99")
 	own.Gateway = "unified-99"
 	require.NoError(t, s.storeOpenAICodexTicket(t.Context(), account, &own))
-	bound := false
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
-		bound = IsBoundAstraTicketRequest(req.Context())
-		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
-		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
-		require.Equal(t, "http://account.invalid:8080", proxy)
-		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	s.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
+		t.Fatal("own ready ticket must not probe")
+		return nil, nil
 	}}
 	h := targetTicketHeaders()
 	proxy, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
 	require.NoError(t, err)
 	release()
-	require.Empty(t, proxy)
-	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
-	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
-	req.Header = targetTicketHeaders()
-	resp, err := s.doOpenAIUpstream(req, "http://account.invalid:8080", account)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.False(t, bound)
+	require.Equal(t, "http://own.invalid:8080", proxy)
+	require.Equal(t, own.State, h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, strings.Join(own.HarvestCookies, "; "), h.Get("Cookie"))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, nil)
+	req.Header = h
+	bound := s.stickBoundCodexTicketRequest(req, account)
+	require.True(t, IsBoundAstraTicketRequest(bound.Context()))
 	until := time.Now().Add(time.Hour)
 	repo.accounts[2].RateLimitResetAt = &until
 	require.Error(t, s.VerifyStoredAstraTarget(t.Context(), 2), "an existing ticket must not clear cooldowns")
 }
 
-func TestUnifiedAstraBackgroundHarvestsOwnTicketWhileCandyTicketIsLent(t *testing.T) {
-	s, repo, seed := unifiedAstraFixture(t)
+func TestUnifiedAstraBackgroundFallsBackToSelfWithinSharedBudget(t *testing.T) {
+	for _, budget := range []int{2, 4} {
+		t.Run(string(rune('0'+budget)), func(t *testing.T) {
+			s, repo, seed := unifiedAstraFixture(t)
+			s.cfg.Gateway.OpenAICodexTicket.MaxProbesPerRound = budget
+			calls := 0
+			borrowed := mint780State(time.Now().Add(-2 * time.Second))
+			self := mint780State(time.Now().Add(-time.Second))
+			selfCookies := mint780Pair(time.Now().Add(time.Hour), "unified-99")
+			s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
+				calls++
+				h := http.Header{}
+				switch calls {
+				case 1:
+					require.Equal(t, seed.State, req.Header.Get(openAICodexTurnStateHeader))
+					h.Set(openAICodexTurnStateHeader, borrowed)
+				case 2:
+					require.Equal(t, borrowed, req.Header.Get(openAICodexTurnStateHeader))
+					h.Set(openAICodexTurnStateHeader, self) // Failed reuse must not be persisted.
+				case 3:
+					require.Equal(t, "http://self.invalid:8080", proxy)
+					require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
+					require.Empty(t, req.Header.Get("Cookie"))
+					h.Set(openAICodexTurnStateHeader, self)
+					h["Set-Cookie"] = selfCookies
+				case 4:
+					require.Equal(t, self, req.Header.Get(openAICodexTurnStateHeader))
+					require.Equal(t, strings.Join(selfCookies, "; "), req.Header.Get("Cookie"))
+				default:
+					t.Fatal("exceeded shared acquisition budget")
+				}
+				return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
+			}}
+			account, _ := repo.GetByID(t.Context(), 2)
+			s.probeOnceOpenAICodexTicket(t.Context(), account, "gpt-6-astra")
+			require.Equal(t, budget, calls)
+			ticket := s.lookupOpenAICodexTicket(account, "gpt-6-astra")
+			require.Equal(t, budget == 4, ticket.valid(time.Now(), 780))
+			if budget == 4 {
+				require.Equal(t, self, ticket.State)
+				require.Equal(t, "http://self.invalid:8080", ticket.HarvestProxyURL)
+				require.Zero(t, ticket.SourceAccountID)
+			}
+		})
+	}
+}
+
+func TestUnifiedAstraConcurrentVerificationDoesNotDuplicateMint(t *testing.T) {
+	s, _, _ := unifiedAstraFixture(t)
+	started, proceed := make(chan struct{}), make(chan struct{})
 	calls := 0
-	self := mint780State(time.Now().Add(-time.Second))
-	selfCookies := mint780Pair(time.Now().Add(time.Hour), "unified-99")
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
+	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {
 		calls++
-		require.NotEqual(t, seed.State, req.Header.Get(openAICodexTurnStateHeader), "harvest must not start from a borrowed ticket")
 		h := http.Header{}
-		switch calls {
-		case 1:
-			require.Equal(t, "http://self.invalid:8080", proxy)
-			require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
-			require.Empty(t, req.Header.Get("Cookie"))
-			h.Set(openAICodexTurnStateHeader, self)
-			h["Set-Cookie"] = selfCookies
-		case 2:
-			require.Equal(t, self, req.Header.Get(openAICodexTurnStateHeader))
-		case 3:
-			require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-			require.Equal(t, self, req.Header.Get(openAICodexTurnStateHeader))
-			body := candyStream("21")
-			return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
-		default:
-			t.Fatal("self harvest exceeded the candy check")
+		if calls == 1 {
+			close(started)
+			select {
+			case <-proceed:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			h.Set(openAICodexTurnStateHeader, mint780State(time.Now()))
 		}
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
-	account, _ := repo.GetByID(t.Context(), 2)
-	s.probeOnceOpenAICodexTicket(t.Context(), account, "gpt-6-astra")
-	require.Equal(t, 3, calls)
-	ticket := s.lookupOpenAICodexTicket(account, "gpt-6-astra")
-	require.Equal(t, self, ticket.State)
-	require.Equal(t, "self", ticket.Acquisition)
-	require.Zero(t, ticket.SourceAccountID)
-	passed, tested := s.astraCandyVerdictFor(account.ID, ticket)
-	require.True(t, tested)
-	require.True(t, passed)
-	require.Equal(t, seed.State, s.memoryCandyAstraTicket(2, "gpt-6-astra").State)
+	done := make(chan error, 1)
+	go func() { done <- s.VerifyStoredAstraTarget(t.Context(), 2) }()
+	<-started
+	require.EqualError(t, s.VerifyStoredAstraTarget(t.Context(), 2), "target_validation_in_progress")
+	close(proceed)
+	require.NoError(t, <-done)
+	require.Equal(t, 2, calls)
 }
 
-func TestUnifiedAstraBackgroundHarvestsSelfWhenNoCandyTicket(t *testing.T) {
+func TestUnifiedAstraForwardingNeverAcquiresMissingTicket(t *testing.T) {
 	s, repo, _ := unifiedAstraFixture(t)
-	source, _ := repo.GetByID(t.Context(), 1)
-	s.recordAstraCandyVerdict(1, s.lookupOpenAICodexTicket(source, "gpt-6-astra"), "candy_incorrect")
-	calls := 0
-	self := mint780State(time.Now().Add(-time.Second))
-	selfCookies := mint780Pair(time.Now().Add(time.Hour), "unified-99")
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
-		calls++
-		h := http.Header{}
-		switch calls {
-		case 1:
-			require.Equal(t, "http://self.invalid:8080", proxy)
-			require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
-			require.Empty(t, req.Header.Get("Cookie"))
-			h.Set(openAICodexTurnStateHeader, self)
-			h["Set-Cookie"] = selfCookies
-		case 2:
-			require.Equal(t, self, req.Header.Get(openAICodexTurnStateHeader))
-			require.Equal(t, strings.Join(selfCookies, "; "), req.Header.Get("Cookie"))
-		case 3:
-			require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-			require.Equal(t, self, req.Header.Get(openAICodexTurnStateHeader))
-			return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(candyStream("21")))}, nil
-		default:
-			t.Fatal("self harvest exceeded the candy check")
-		}
-		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
+	s.httpUpstream = &harvestProxyUpstream{do: func(*http.Request, string) (*http.Response, error) {
+		t.Fatal("forwarding must not probe")
+		return nil, nil
 	}}
-	account, _ := repo.GetByID(t.Context(), 2)
-	s.probeOnceOpenAICodexTicket(t.Context(), account, "gpt-6-astra")
-	require.Equal(t, 3, calls)
-	ticket := s.lookupOpenAICodexTicket(account, "gpt-6-astra")
-	require.Equal(t, self, ticket.State)
-	require.Equal(t, "self", ticket.Acquisition)
-	require.Zero(t, ticket.SourceAccountID)
-	other := ticketTestAccount(3)
-	other.Credentials = map[string]any{"access_token": "other-token", "chatgpt_account_id": "other-workspace"}
-	repo.accounts[3] = other
-	s.cfg.Gateway.CodexGatewayPin.TargetAccountIDs = []int64{2, 3}
-	donor, shared := s.storedAstraDonor(t.Context(), 3, "gpt-6-astra", nil)
-	require.Equal(t, int64(2), donor.ID)
-	require.Equal(t, self, shared.State)
-	require.Equal(t, 3, calls, "a passed ticket is worn without another candy request")
-}
-
-func TestUnifiedAstraForwardingWearsCandyTicketWithoutProbing(t *testing.T) {
-	s, repo, seed := unifiedAstraFixture(t)
-	s.cfg.Gateway.OpenAICodexTicket.FailClosed = true
-	calls := 0
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
-		calls++
-		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
-		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
-		require.Equal(t, "http://account.invalid:8080", proxy)
-		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-		require.Equal(t, "target-workspace", req.Header.Get("ChatGPT-Account-ID"))
-		require.False(t, IsOpenAICodexStateProbeRequest(req.Context()))
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
-	}}
-	account, _ := repo.GetByID(t.Context(), 2)
-	require.False(t, s.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
-	require.True(t, s.ticketPoolSchedulingReady(account, s.cfg.AstraRouting(t.Context())))
-	resetCodexHarvestFlow()
-	snapshot := s.StoredAstraSnapshot(t.Context())
-	require.Equal(t, "ready", snapshot.Targets[0].State)
-	require.Equal(t, "shared_candy_ticket", snapshot.Targets[0].Reason)
 	for _, cooling := range []bool{false, true} {
 		if cooling {
 			s.openaiCodexTicketProbeCooldown.Store(openAICodexTicketKey(2, "gpt-6-astra"), time.Now().Add(time.Minute))
 		}
 		h := targetTicketHeaders()
-		proxy, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
-		require.NoError(t, err)
+		before := h.Clone()
+		_, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
+		require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
 		release()
-		require.Empty(t, proxy)
-		require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
-		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
-		require.Equal(t, "Bearer target-token", h.Get("Authorization"))
+		require.Equal(t, before, h)
+		require.Zero(t, repo.writes)
 	}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
-	require.NoError(t, err)
-	req.Header = targetTicketHeaders()
-	resp, err := s.doOpenAIUpstream(req, "http://account.invalid:8080", account)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 1, calls)
-	require.Zero(t, repo.writes)
-	var borrowed []CodexHarvestFlowEvent
-	for _, event := range listCodexHarvestFlowEvents() {
-		if event.Kind == "business_borrow" {
-			borrowed = append(borrowed, event)
-		}
-	}
-	require.Empty(t, borrowed)
-	source, _ := repo.GetByID(t.Context(), 1)
-	sourceReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-6-astra"}`))
-	require.NoError(t, err)
-	sourceReq.Header.Set("Authorization", "Bearer source-token")
-	sourceReq.Header.Set("ChatGPT-Account-ID", "source-workspace")
-	require.NoError(t, s.applyOpenAICodexTicket(t.Context(), source, "gpt-6-astra", sourceReq.Header))
-	require.Empty(t, sourceReq.Header.Get(openAICodexTurnStateHeader))
-	s.astraCandyVerdicts = nil
-	require.False(t, s.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
-	h := targetTicketHeaders()
-	_, release, err := s.ApplyStoredAstraTarget(t.Context(), h, 2, "sse")
-	require.NoError(t, err)
-	release()
-	require.Equal(t, "unrelated", h.Get(openAICodexTurnStateHeader))
-	require.Equal(t, strings.Join(seed.HarvestCookies, "; "), h.Get("Cookie"))
-	require.Equal(t, 1, calls)
-}
-
-func TestUnifiedAstraLendsSolTicketWithoutHarvestEgress(t *testing.T) {
-	s, repo, seed := unifiedAstraFixture(t)
-	s.cfg.Gateway.OpenAICodexTicket.Models = []string{"gpt-6-astra", "gpt-5.6-sol"}
-	source, _ := repo.GetByID(t.Context(), 1)
-	sol := *seed
-	sol.Model = "gpt-5.6-sol"
-	sol.State = mint780State(time.Now().Add(-time.Second))
-	sol.Gateway = "unified-77"
-	sol.HarvestCookies = mint780Pair(time.Now().Add(time.Hour), "unified-77")
-	sol.HarvestProxyURL = "http://sol-harvest.invalid:8080"
-	require.NoError(t, s.storeOpenAICodexTicket(t.Context(), source, &sol))
-	s.recordAstraCandyVerdict(1, &sol, "candy_passed")
-	s.cfg.Gateway.OpenAICodexTicket.FailClosed = true
-	account, _ := repo.GetByID(t.Context(), 2)
-	require.False(t, s.openAICodexTicketBlocksAccount(account, "gpt-5.6-sol"))
-	require.Equal(t, sol.State, s.memoryCandyAstraTicket(2, "gpt-5.6-sol").State)
-	require.Equal(t, seed.State, s.memoryCandyAstraTicket(2, "gpt-6-astra").State)
-	calls := 0
-	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
-		calls++
-		require.Equal(t, "http://account.invalid:8080", proxy)
-		require.Equal(t, "Bearer target-token", req.Header.Get("Authorization"))
-		require.Equal(t, "unrelated", req.Header.Get(openAICodexTurnStateHeader))
-		require.Equal(t, strings.Join(seed.HarvestCookies, "; "), req.Header.Get("Cookie"))
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
-	}}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{"model":"gpt-5.6-sol"}`))
-	require.NoError(t, err)
-	req.Header = targetTicketHeaders()
-	resp, err := s.doOpenAIUpstream(req, "http://account.invalid:8080", account)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 1, calls)
-}
-
-type astraHistoryRepo struct {
-	SettingRepository
-	rows   []AstraGatewayHistoryRecord
-	passed []bool
-}
-
-func (r *astraHistoryRepo) RecordAstraGateway(_ context.Context, row AstraGatewayHistoryRecord, passed bool) error {
-	r.rows = append(r.rows, row)
-	r.passed = append(r.passed, passed)
-	return nil
-}
-func (r *astraHistoryRepo) ListAstraGateways(context.Context, string, bool, int, int) (AstraGatewayHistoryPage, error) {
-	return AstraGatewayHistoryPage{}, nil
-}
-
-func TestBusinessBorrowUpdatesGatewayHostHistory(t *testing.T) {
-	s, _, seed := unifiedAstraFixture(t)
-	history := &astraHistoryRepo{}
-	s.settingService = &SettingService{settingRepo: history}
-	borrower, donor := ticketTestAccount(2), ticketTestAccount(1)
-	donor.Name = "source"
-	s.noteAstraBusinessInjection(borrower, donor, seed)
-	s.noteAstraBusinessInjection(borrower, donor, seed)
-	require.Len(t, history.rows, 2)
-	require.Equal(t, []bool{true, true}, history.passed)
-	require.Equal(t, "chat.gateway.unified-42.api.openai.com", history.rows[1].Gateway)
-	require.Equal(t, int64(1), history.rows[1].SourceAccountID)
-	require.Equal(t, int64(2), history.rows[1].TargetAccountID)
-	require.Equal(t, "target_probe_passed", history.rows[1].LastReason)
 }

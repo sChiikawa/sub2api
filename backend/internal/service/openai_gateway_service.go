@@ -628,15 +628,6 @@ type OpenAIGatewayService struct {
 	astraCandyMu                   sync.Mutex
 	astraCandySeen                 map[[32]byte]time.Time
 	astraCandyRunning              int
-	gatewayCandyRunning            int
-	gatewayCandyInflight           map[string]struct{}
-	astraCandyVerdicts             map[[32]byte]astraCandyVerdict
-	astraGatewayMu                 sync.Mutex
-	astraGatewaySlots              map[string]astraGatewaySlot
-	astraGatewayTurns              map[int64]*astraGatewayTurn
-	astraGatewayCandyPass          map[int64]map[string]astraGatewayCandyAccountPass
-	astraGatewaySeeded             bool
-	astraGatewayLoaded             bool
 	openaiCodexTickets             sync.Map
 	openaiCodexTicketStateMu       sync.Mutex
 	openaiCodexTicketCursors       sync.Map // codexHarvestTier -> *atomic.Uint64

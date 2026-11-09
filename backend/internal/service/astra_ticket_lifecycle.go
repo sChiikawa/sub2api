@@ -3,16 +3,12 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
 // AstraTicketLifecycle joins gateway reuse to the account ticket store. It is
@@ -29,11 +25,6 @@ type AstraTicketLifecycle interface {
 
 type boundAstraTicketContextKey struct{}
 
-// sharedAstraTicketContextKey carries the candy-passed ticket a business
-// request is wearing. The ticket stays stored on its owner; the borrower's
-// account record is not given a copy.
-type sharedAstraTicketContextKey struct{}
-
 // IsBoundAstraTicketRequest prevents a later transport wrapper from replacing
 // one half of a verified credential bundle. This marker is never an HTTP header.
 func IsBoundAstraTicketRequest(ctx context.Context) bool {
@@ -41,14 +32,10 @@ func IsBoundAstraTicketRequest(ctx context.Context) bool {
 	return bound
 }
 
-func (s *OpenAIGatewayService) codexGatewayRotationEnabled(ctx context.Context) bool {
-	return s != nil && s.cfg != nil &&
-		s.openAICodexTicketEnabledContext(ctx) && s.openAICodexTicketConfig().TargetLength == 780 &&
-		s.openAICodexTicketGatedModel(OpenAICodexStateProbeDefaultModel)
-}
-
 func (s *OpenAIGatewayService) UnifiedAstraTicketsEnabled(ctx context.Context) bool {
-	return s.codexGatewayRotationEnabled(ctx) && s.accountRepo != nil && s.cfg.AstraRouting(ctx).CookiePool.Enabled
+	return s != nil && s.cfg != nil && s.accountRepo != nil &&
+		s.openAICodexTicketEnabledContext(ctx) && s.openAICodexTicketConfig().TargetLength == 780 &&
+		s.openAICodexTicketGatedModel(OpenAICodexStateProbeDefaultModel) && s.cfg.AstraRouting(ctx).CookiePool.Enabled
 }
 
 func astraTicketAccountEligible(ctx context.Context, a *Account) bool {
@@ -66,308 +53,40 @@ func astraTicketAccountEligible(ctx context.Context, a *Account) bool {
 		!a.isModelRateLimitedWithContext(ctx, OpenAICodexStateProbeDefaultModel)
 }
 
-func lendableAstraTicket(a *Account, ticket *openAICodexTicket, now time.Time) bool {
-	return ticket.valid(now, 780) && ticket.Transport == "sse" && ticketIdentityMatches(a, ticket) &&
-		openAICodexTicketRemainingUntil(ticket).Sub(now) > 30*time.Second
-}
-
-// storedAstraDonor returns a ticket that passed its candy check: sources
-// first, then tickets other borrowers harvested themselves. A borrowed ticket
-// is never lent on. With a reserve it may spend one request checking one
-// untested candidate, preferring sources; without one it never sends a request.
-func (s *OpenAIGatewayService) storedAstraDonor(ctx context.Context, targetID int64, model string, reserve func() bool) (*Account, *openAICodexTicket) {
-	model = normalizeOpenAICodexTicketModel(model)
-	if model == "" {
-		return nil, nil
-	}
-	settings := s.cfg.AstraRouting(ctx)
-	var pendingAccount *Account
-	var pending *openAICodexTicket
-	now := time.Now()
-	consider := func(id int64, member bool) (*Account, *openAICodexTicket) {
-		a, err := s.accountRepo.GetByID(ctx, id)
-		if err != nil || !astraTicketAccountEligible(ctx, a) {
-			return nil, nil
-		}
-		primary := s.lookupOpenAICodexTicket(a, model)
-		if primary == nil {
-			return nil, nil
-		}
-		var passed, untested *openAICodexTicket
-		for _, ticket := range []*openAICodexTicket{primary, primary.Standby} {
-			if !lendableAstraTicket(a, ticket, now) || (member && ticket.Acquisition == "reuse") {
-				continue
-			}
-			ok, tested := s.astraCandyVerdictFor(a.ID, ticket)
-			if ok && (passed == nil || openAICodexTicketRemainingUntil(ticket).After(openAICodexTicketRemainingUntil(passed))) {
-				passed = ticket
-			}
-			if !tested && (untested == nil || openAICodexTicketRemainingUntil(ticket).After(openAICodexTicketRemainingUntil(untested))) {
-				untested = ticket
-			}
-		}
-		if passed != nil {
-			return a, detachAstraDonorTicket(passed)
-		}
-		if untested != nil && pending == nil {
-			pendingAccount, pending = a, untested
-		}
-		return nil, nil
-	}
-	for _, id := range settings.CookiePool.SourceAccountIDs {
+func (s *OpenAIGatewayService) storedAstraDonor(ctx context.Context, targetID int64) (*Account, *openAICodexTicket) {
+	for _, id := range s.cfg.AstraRouting(ctx).CookiePool.SourceAccountIDs {
 		if id == targetID || ctx.Err() != nil {
 			continue
 		}
-		if a, ticket := consider(id, false); ticket != nil {
-			return a, ticket
-		}
-	}
-	for _, id := range settings.CookiePool.TargetAccountIDs {
-		if id == targetID || ctx.Err() != nil || slices.Contains(settings.CookiePool.SourceAccountIDs, id) ||
-			!s.astraMemberMayLend(id, model, now, pending == nil) {
+		a, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil || !astraTicketAccountEligible(ctx, a) {
 			continue
 		}
-		if a, ticket := consider(id, true); ticket != nil {
-			return a, ticket
+		ticket := s.lookupOpenAICodexTicket(a, OpenAICodexStateProbeDefaultModel)
+		if ticket != nil && ticket.Standby.valid(time.Now(), 780) && ticket.Standby.Transport == "sse" &&
+			ticketIdentityMatches(a, ticket.Standby) && openAICodexTicketRemainingUntil(ticket.Standby).After(openAICodexTicketRemainingUntil(ticket)) {
+			ticket = ticket.Standby
+		}
+		if ticket.valid(time.Now(), 780) && ticket.Transport == "sse" && time.Until(openAICodexTicketRemainingUntil(ticket)) > 30*time.Second {
+			copy := *ticket
+			copy.HarvestCookies = slices.Clone(ticket.HarvestCookies)
+			return a, &copy
 		}
 	}
-	if pending == nil || reserve == nil || !s.checkAstraDonorCandy(ctx, pendingAccount, pending, reserve) {
-		return nil, nil
-	}
-	return pendingAccount, detachAstraDonorTicket(pending)
-}
-
-// astraMemberMayLend screens a borrower's cached ticket before an account
-// read, since every harvest-scope account is a potential lender. A ticket not
-// yet loaded into this process is skipped until the collector reads it.
-func (s *OpenAIGatewayService) astraMemberMayLend(id int64, model string, now time.Time, untestedUseful bool) bool {
-	model = normalizeOpenAICodexTicketModel(model)
-	if model == "" {
-		return false
-	}
-	s.openaiCodexTicketStateMu.Lock()
-	raw, _ := s.openaiCodexTickets.Load(openAICodexTicketKey(id, model))
-	s.openaiCodexTicketStateMu.Unlock()
-	primary, _ := raw.(*openAICodexTicket)
-	if primary == nil {
-		return false
-	}
-	for _, ticket := range []*openAICodexTicket{primary, primary.Standby} {
-		if !ticket.valid(now, 780) || ticket.Transport != "sse" || ticket.Acquisition == "reuse" ||
-			openAICodexTicketRemainingUntil(ticket).Sub(now) <= 30*time.Second {
-			continue
-		}
-		if passed, tested := s.astraCandyVerdictFor(id, ticket); passed || (!tested && untestedUseful) {
-			return true
-		}
-	}
-	return false
-}
-
-// memoryCandyAstraTicket is the ticket a non-source account's business request
-// wears: a candy-passed SSE ticket already loaded in this process, sources
-// first, then another account's own harvest. It does not read the database or
-// send a request. The account never sees its own ticket here.
-func (s *OpenAIGatewayService) memoryCandyAstraTicket(borrowerID int64, model string) *openAICodexTicket {
-	model = normalizeOpenAICodexTicketModel(model)
-	if model == "" {
-		return nil
-	}
-	if s == nil || s.cfg == nil || borrowerID <= 0 {
-		return nil
-	}
-	ctx := context.Background()
-	if !s.UnifiedAstraTicketsEnabled(ctx) {
-		return nil
-	}
-	settings := s.cfg.AstraRouting(ctx)
-	if !slices.Contains(settings.CookiePool.TargetAccountIDs, borrowerID) {
-		return nil
-	}
-	now := time.Now()
-	pick := func(id int64, member bool) *openAICodexTicket {
-		s.openaiCodexTicketStateMu.Lock()
-		raw, _ := s.openaiCodexTickets.Load(openAICodexTicketKey(id, model))
-		s.openaiCodexTicketStateMu.Unlock()
-		primary, _ := raw.(*openAICodexTicket)
-		if primary == nil {
-			return nil
-		}
-		var best *openAICodexTicket
-		for _, ticket := range []*openAICodexTicket{primary, primary.Standby} {
-			if ticket == nil || (member && ticket.Acquisition == "reuse") {
-				continue
-			}
-			if !ticket.valid(now, 780) || ticket.Transport != "sse" || openAICodexTicketRemainingUntil(ticket).Sub(now) <= 30*time.Second {
-				continue
-			}
-			if passed, _ := s.astraCandyVerdictFor(id, ticket); !passed {
-				continue
-			}
-			if best == nil || openAICodexTicketRemainingUntil(ticket).After(openAICodexTicketRemainingUntil(best)) {
-				best = ticket
-			}
-		}
-		if best == nil {
-			return nil
-		}
-		return detachAstraDonorTicket(best)
-	}
-	for _, id := range settings.CookiePool.SourceAccountIDs {
-		if id <= 0 || id == borrowerID {
-			continue
-		}
-		if ticket := pick(id, false); ticket != nil {
-			return ticket
-		}
-	}
-	for _, id := range settings.CookiePool.TargetAccountIDs {
-		if id <= 0 || id == borrowerID || slices.Contains(settings.CookiePool.SourceAccountIDs, id) {
-			continue
-		}
-		if ticket := pick(id, true); ticket != nil {
-			return ticket
-		}
-	}
-	return nil
-}
-
-// sharedAstraBusinessTicket is the candy-passed ticket safe to put on a
-// business request. Unlike the memory scan, the owner must still be eligible
-// and the ticket must still belong to that owner. It never sends a request.
-func (s *OpenAIGatewayService) astraBorrowModels() []string {
-	seen := map[string]bool{}
-	var models []string
-	for _, model := range s.openAICodexTicketConfig().Models {
-		model = normalizeOpenAICodexTicketModel(model)
-		if model == "" || seen[model] {
-			continue
-		}
-		seen[model] = true
-		models = append(models, model)
-	}
-	if len(models) == 0 {
-		return []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
-	}
-	return models
-}
-
-func (s *OpenAIGatewayService) sharedAstraBusinessTicket(ctx context.Context, account *Account, protocol, model string) (*Account, *openAICodexTicket) {
-	if s == nil || account == nil || protocol != "sse" || !s.UnifiedAstraTicketsEnabled(ctx) {
-		return nil, nil
-	}
-	if !slices.Contains(s.cfg.AstraRouting(ctx).CookiePool.TargetAccountIDs, account.ID) {
-		return nil, nil
-	}
-	donor, ticket := s.storedAstraDonor(ctx, account.ID, model, nil)
-	if ticket == nil || ticket.Transport != protocol {
-		return nil, nil
-	}
-	return donor, ticket
-}
-
-// dressSharedAstraBusinessRequest used to put a candy-passed ticket on a
-// business request. Gateway rotation leaves the request unchanged.
-func (s *OpenAIGatewayService) dressSharedAstraBusinessRequest(req *http.Request, account *Account) (*http.Request, error) {
-	if req == nil || account == nil || (s != nil && s.UnifiedAstraTicketsEnabled(req.Context())) {
-		return req, nil
-	}
-	raw := peekHTTPRequestBody(req)
-	model := extractOpenAICodexTicketModel(raw)
-	donor, shared := s.sharedAstraBusinessTicket(req.Context(), account, "sse", model)
-	if shared != nil {
-		if slot, _ := s.currentAccountGateway(account, model, time.Now()); slot != nil {
-			shared.HarvestCookies = append([]string(nil), slot.Cookies...)
-		}
-		req.Header.Set(openAICodexTurnStateHeader, shared.State)
-		req = req.WithContext(context.WithValue(req.Context(), sharedAstraTicketContextKey{}, shared))
-		s.noteAstraBusinessInjection(account, donor, shared)
-		return req, nil
-	}
-	remembered := s.memoryCandyAstraTicket(account.ID, model)
-	if remembered == nil || req.Header.Get(openAICodexTurnStateHeader) != remembered.State {
-		return req, nil
-	}
-	own := s.lookupOpenAICodexTicket(account, model)
-	if own.valid(time.Now(), 780) && (own.Transport == "" || own.Transport == "sse") {
-		req.Header.Set(openAICodexTurnStateHeader, own.State)
-		return req, nil
-	}
-	req.Header.Del(openAICodexTurnStateHeader)
-	if s.openAICodexTicketConfig().FailClosed && !openAICodexSkipHarvest(account) {
-		return req, denyOpenAITicket()
-	}
-	return req, nil
-}
-
-func (s *OpenAIGatewayService) noteAstraBusinessInjection(borrower, donor *Account, ticket *openAICodexTicket) {
-	if s == nil || borrower == nil || ticket == nil {
-		return
-	}
-	donorID := ticket.AccountID
-	if donor != nil && donor.ID > 0 {
-		donorID = donor.ID
-	}
-	donorName := ""
-	if donor != nil {
-		donorName = donor.Name
-	}
-	logger.L().Info("openai_codex_ticket injected",
-		zap.Int64("account_id", borrower.ID),
-		zap.Int64("source_account_id", donorID),
-		zap.String("source_account_name", donorName),
-		zap.String("model", ticket.Model),
-		zap.String("gateway", ticket.Gateway),
-	)
-	host := codex780CookieGatewayHost(ticket.HarvestCookies)
-	recordCodexHarvestFlow(CodexHarvestFlowEvent{
-		Stage:       "ticket",
-		Kind:        "business_borrow",
-		Result:      "candy_passed",
-		AccountID:   borrower.ID,
-		AccountName: borrower.Name,
-		Model:       ticket.Model,
-		Node:        host,
-		Reason:      "candy_passed",
-		Detail:      fmt.Sprintf("#%d", donorID),
-	})
-	if host != "" && donorID > 0 {
-		s.recordAstraGatewayHistory(AstraGatewayHistoryRecord{
-			Gateway:         host,
-			SourceAccountID: donorID,
-			TargetAccountID: borrower.ID,
-			LastSeen:        time.Now(),
-			LastReason:      "target_probe_passed",
-		}, true)
-	}
-}
-
-func detachAstraDonorTicket(ticket *openAICodexTicket) *openAICodexTicket {
-	copy := *ticket
-	copy.HarvestCookies = slices.Clone(ticket.HarvestCookies)
-	return &copy
+	return nil, nil
 }
 
 func (s *OpenAIGatewayService) PrepareStoredAstraSources(ctx context.Context) error {
 	if !s.UnifiedAstraTicketsEnabled(ctx) {
 		return errors.New("cookie_pool_disabled")
 	}
-	for _, model := range s.astraBorrowModels() {
-		if _, ticket := s.storedAstraDonor(ctx, 0, model, nil); ticket != nil {
-			return nil
-		}
+	if _, ticket := s.storedAstraDonor(ctx, 0); ticket != nil {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	controls, _ := s.harvestControls(ctx)
-	round := &codexHarvestRound{limit: controls.Speed.MaxRequestsPerRound}
-	ctx = context.WithValue(ctx, codexHarvestRoundKey{}, round)
-	reserve := func() bool { return round.Take(controls.Speed.MaxRequestsPerRound) }
-	for _, model := range s.astraBorrowModels() {
-		if _, ticket := s.storedAstraDonor(ctx, 0, model, reserve); ticket != nil {
-			return nil
-		}
-	}
+	ctx = context.WithValue(ctx, codexHarvestRoundKey{}, &codexHarvestRound{limit: controls.Speed.MaxRequestsPerRound})
 	// Reuse is the fast path. When it has no donor, use the existing self
 	// collector for source accounts rather than creating a second ticket store.
 	for _, id := range s.cfg.AstraRouting(ctx).CookiePool.SourceAccountIDs {
@@ -375,38 +94,28 @@ func (s *OpenAIGatewayService) PrepareStoredAstraSources(ctx context.Context) er
 		if err != nil || !astraTicketAccountEligible(ctx, account) {
 			continue
 		}
-		for _, model := range s.astraBorrowModels() {
-			s.probeOnceOpenAICodexTicket(ctx, account, model)
-			if _, ticket := s.storedAstraDonor(ctx, 0, model, reserve); ticket != nil {
-				return nil
-			}
+		s.probeOnceOpenAICodexTicket(ctx, account, OpenAICodexStateProbeDefaultModel)
+		if _, ticket := s.storedAstraDonor(ctx, 0); ticket != nil {
+			return nil
 		}
 	}
 	return errors.New("no_qualified_source_route")
 }
 
-// astraBorrowerAdmitted keeps a borrow bound to the configuration it started
-// under and to the account still being a derived borrower.
-func (s *OpenAIGatewayService) astraBorrowerAdmitted(ctx context.Context, settings config.AstraRoutingSettings, id int64) bool {
-	current := s.cfg.AstraRouting(ctx)
-	return config.AstraRouteSettingsEqual(settings, current) && slices.Contains(current.CookiePool.TargetAccountIDs, id)
-}
-
-// tryBorrowStoredAstraTicket mints a private ticket from a donor. Background
-// harvest and target verification do not call it: an account harvests its own
-// ticket, and other accounts wear a candy-passed ticket only on business requests.
+// tryBorrowStoredAstraTicket runs at most one donor candidate. The caller owns
+// the harvest lock and request budget; failure may fall back to self collection.
 func (s *OpenAIGatewayService) tryBorrowStoredAstraTicket(ctx context.Context, account *Account, model string, timeout time.Duration, reserve func() bool) (bool, codexHarvestProbeResult) {
 	var result codexHarvestProbeResult
-	settings := s.cfg.AstraRouting(ctx)
 	if !s.UnifiedAstraTicketsEnabled(ctx) || model != OpenAICodexStateProbeDefaultModel ||
-		!slices.Contains(settings.CookiePool.TargetAccountIDs, account.ID) {
+		!slices.Contains(s.cfg.AstraRouting(ctx).CookiePool.TargetAccountIDs, account.ID) {
 		return false, result
 	}
 	controls, configured := s.harvestControls(ctx)
 	if controls.Transport != "" && controls.Transport != "sse" {
 		return false, result // SSE admission never qualifies a WebSocket ticket.
 	}
-	donor, seed := s.storedAstraDonor(ctx, account.ID, model, reserve)
+	settings := s.cfg.AstraRouting(ctx)
+	donor, seed := s.storedAstraDonor(ctx, account.ID)
 	if seed == nil {
 		return false, result
 	}
@@ -432,7 +141,7 @@ func (s *OpenAIGatewayService) tryBorrowStoredAstraTicket(ctx context.Context, a
 	identity := ticketIdentity(account)
 	admitted := func() bool {
 		if ctx.Err() != nil || !seed.valid(time.Now(), 780) || !s.UnifiedAstraTicketsEnabled(ctx) ||
-			!s.astraBorrowerAdmitted(ctx, settings, account.ID) || s.codexTicketChatHeld(account.ID) {
+			!config.AstraRouteSettingsEqual(settings, s.cfg.AstraRouting(ctx)) || s.codexTicketChatHeld(account.ID) {
 			return false
 		}
 		fresh, e := s.accountRepo.GetByID(ctx, account.ID)
@@ -448,7 +157,7 @@ func (s *OpenAIGatewayService) tryBorrowStoredAstraTicket(ctx context.Context, a
 	}
 	fresh, err := s.accountRepo.GetByID(ctx, account.ID)
 	if ctx.Err() != nil || err != nil || !astraTicketAccountEligible(ctx, fresh) || ticketIdentity(fresh) != identity ||
-		!s.UnifiedAstraTicketsEnabled(ctx) || !s.astraBorrowerAdmitted(ctx, settings, account.ID) {
+		!s.UnifiedAstraTicketsEnabled(ctx) || !config.AstraRouteSettingsEqual(settings, s.cfg.AstraRouting(ctx)) {
 		result.Kind = "cancelled"
 		return true, result
 	}
@@ -477,14 +186,6 @@ func (s *OpenAIGatewayService) tryBorrowStoredAstraTicket(ctx context.Context, a
 		return true, result
 	}
 	s.openaiCodexTicketProbeCooldown.Delete(openAICodexTicketKey(fresh.ID, model))
-	logger.L().Info("openai_codex_ticket borrowed",
-		zap.Int64("account_id", fresh.ID),
-		zap.Int64("source_account_id", donor.ID),
-		zap.String("source_account_name", donor.Name),
-		zap.String("model", model),
-		zap.String("node", seed.HarvestNodeName),
-		zap.String("gateway", ticket.Gateway),
-	)
 	return true, result
 }
 
@@ -502,29 +203,57 @@ func (s *OpenAIGatewayService) acquireStoredAstraTarget(ctx context.Context, id 
 	if protocol != "sse" {
 		return nil, nil, ErrOpenAICodexTicketUnavailable
 	}
-	// Readiness is a candy-passed ticket other accounts can wear on business
-	// requests. Verification must not mint that ticket onto this account.
-	for _, model := range s.astraBorrowModels() {
-		if _, shared := s.sharedAstraBusinessTicket(ctx, account, protocol, model); shared != nil {
-			return account, shared, nil
+	if _, ticket := s.storedAstraDonor(ctx, id); ticket == nil {
+		if err := s.PrepareStoredAstraSources(ctx); err != nil {
+			return nil, nil, err
+		}
+		account, err = s.accountRepo.GetByID(ctx, id)
+		if err != nil || !astraTicketAccountEligible(ctx, account) {
+			return nil, nil, errors.New("account_unavailable")
+		}
+		if ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel); ticket.valid(time.Now(), 780) && ticket.Transport == protocol {
+			return account, ticket, nil
 		}
 	}
-	if err := s.PrepareStoredAstraSources(ctx); err != nil {
-		return nil, nil, err
+	if !s.codexHarvestRunMu.TryLock() {
+		return nil, nil, errors.New("target_validation_in_progress")
 	}
-	account, err = s.accountRepo.GetByID(ctx, id)
-	if err != nil || !astraTicketAccountEligible(ctx, account) {
-		return nil, nil, errors.New("account_unavailable")
-	}
+	defer s.codexHarvestRunMu.Unlock()
+	// A collector may have finished between the first read and acquisition.
 	if ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel); ticket.valid(time.Now(), 780) && ticket.Transport == protocol {
 		return account, ticket, nil
 	}
-	for _, model := range s.astraBorrowModels() {
-		if _, shared := s.sharedAstraBusinessTicket(ctx, account, protocol, model); shared != nil {
-			return account, shared, nil
-		}
+	if s.ticketProbeCoolingDown(id, OpenAICodexStateProbeDefaultModel, time.Now()) {
+		return nil, nil, errors.New("source_probe_cooldown")
 	}
-	return nil, nil, errors.New("no_qualified_source_route")
+	budget := 2
+	controls, _ := s.harvestControls(ctx)
+	timeout := time.Duration(controls.Speed.AttemptTimeoutSeconds) * time.Second
+	if timeout < time.Second {
+		timeout = 25 * time.Second
+	}
+	attempted, result := s.tryBorrowStoredAstraTicket(ctx, account, OpenAICodexStateProbeDefaultModel, timeout, func() bool {
+		if budget <= 0 {
+			return false
+		}
+		budget--
+		return true
+	})
+	if !attempted {
+		return nil, nil, errors.New("no_qualified_source_route")
+	}
+	if result.Kind != "success" {
+		if ctx.Err() == nil {
+			cooldown := astraTicketCooldown(controls.Speed.CooldownSeconds, result.RetryAfter)
+			s.openaiCodexTicketProbeCooldown.Store(openAICodexTicketKey(id, OpenAICodexStateProbeDefaultModel), time.Now().Add(cooldown))
+		}
+		return nil, nil, errors.New("target_probe_failed")
+	}
+	ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel)
+	if !ticket.valid(time.Now(), 780) || ticket.Transport != protocol {
+		return nil, nil, ErrOpenAICodexTicketUnavailable
+	}
+	return account, ticket, nil
 }
 
 func (s *OpenAIGatewayService) VerifyStoredAstraTarget(ctx context.Context, id int64) error {
@@ -542,27 +271,23 @@ func (s *OpenAIGatewayService) ApplyStoredAstraTarget(ctx context.Context, h htt
 	if err != nil || !astraTicketAccountEligible(ctx, account) {
 		return "", func() {}, errors.New("account_unavailable")
 	}
+	ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel)
+	if !ticket.valid(time.Now(), 780) || ticket.Transport != protocol {
+		return "", func() {}, ErrOpenAICodexTicketUnavailable
+	}
 	// Never combine another workspace with the caller's credentials. The
 	// access-token provider may have refreshed a token since this DB snapshot.
-	headersMatch := h.Get("ChatGPT-Account-ID") == account.GetCredential("chatgpt_account_id") && h.Get("Authorization") != ""
-	if !headersMatch {
+	if h.Get("ChatGPT-Account-ID") != account.GetCredential("chatgpt_account_id") || h.Get("Authorization") == "" {
 		return "", func() {}, errors.New("configuration_changed")
 	}
-	// Business forwarding rotates a saved gateway cookie. It does not attach a
-	// harvested or borrowed ticket state.
-	s.assignBusinessGatewayCookie(h, account, OpenAICodexStateProbeDefaultModel)
-	return openAIAccountProxyURL(account), func() {}, nil
-}
-
-func (s *OpenAIGatewayService) assignBusinessGatewayCookie(h http.Header, account *Account, model string) {
-	if s == nil || h == nil || account == nil {
-		return
+	proxy, release, err := s.pinStoredCodexTicketEgress(ctx, ticket, "")
+	if err != nil {
+		return "", func() {}, err
 	}
-	slot, _ := s.currentAccountGateway(account, model, time.Now())
-	if slot == nil {
-		return
-	}
-	h.Set("Cookie", strings.Join(slot.Cookies, "; "))
+	h.Set(openAICodexTurnStateHeader, ticket.State)
+	restoreBoundCodexTicketHarvestIdentity(h, ticket)
+	releaseChat := s.holdCodexTicketChat(account)
+	return proxy, func() { release(); releaseChat() }, nil
 }
 
 func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGatewayRuntime {
@@ -575,23 +300,6 @@ func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGat
 		if err != nil || !astraTicketAccountEligible(ctx, account) {
 			return r
 		}
-		if target {
-			var shared *openAICodexTicket
-			for _, model := range s.astraBorrowModels() {
-				if shared = s.memoryCandyAstraTicket(id, model); shared != nil {
-					break
-				}
-			}
-			if shared != nil {
-				expires := openAICodexTicketRemainingUntil(shared)
-				r.State, r.Reason = "ready", "shared_candy_ticket"
-				r.CheckedAt, r.ExpiresAt = &shared.CapturedAt, &expires
-				r.RemainingSeconds = int64(expires.Sub(now).Seconds())
-				r.Gateway = "chat.gateway." + shared.Gateway + ".api.openai.com"
-				r.ProxyNode = shared.HarvestNodeName
-				return r
-			}
-		}
 		ticket := s.lookupOpenAICodexTicket(account, OpenAICodexStateProbeDefaultModel)
 		if !ticket.valid(now, 780) {
 			return r
@@ -600,17 +308,6 @@ func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGat
 		r.State, r.Reason = "ready", "target_probe_passed"
 		if !target {
 			r.State, r.Reason = "candidate", "source_passed_pending_target"
-			passed, tested := s.astraCandyVerdictFor(id, ticket)
-			if standby := ticket.Standby; !passed && standby.valid(now, 780) {
-				standbyPassed, standbyTested := s.astraCandyVerdictFor(id, standby)
-				passed, tested = standbyPassed, tested && standbyTested
-			}
-			if !passed {
-				r.State, r.Reason = "waiting", "source_candy_pending"
-				if tested {
-					r.Reason = "source_candy_failed"
-				}
-			}
 		}
 		r.CheckedAt, r.ExpiresAt = &ticket.CapturedAt, &expires
 		r.RemainingSeconds = int64(expires.Sub(now).Seconds())
@@ -636,3 +333,14 @@ func (s *OpenAIGatewayService) StoredAstraSnapshot(ctx context.Context) AstraGat
 
 // Compile-time assertions keep the repository adapter independent of service internals.
 var _ AstraTicketLifecycle = (*OpenAIGatewayService)(nil)
+
+func astraTicketCooldown(seconds int, retry time.Duration) time.Duration {
+	d := time.Duration(seconds) * time.Second
+	if retry > d {
+		d = retry
+	}
+	if d < time.Second {
+		d = time.Second
+	}
+	return d
+}

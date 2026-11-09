@@ -161,22 +161,6 @@ func replaceHTTPRequestJSONBody(req *http.Request, body []byte) {
 	}
 }
 
-// peekHTTPRequestBody reads the JSON body for routing decisions. A one-shot
-// body is put back for the current attempt and stays non-replayable, so a
-// proxy fallback does not send it a second time.
-func peekHTTPRequestBody(req *http.Request) []byte {
-	if req == nil {
-		return nil
-	}
-	replayable := req.GetBody != nil
-	raw, _ := snapshotHTTPRequestBody(req)
-	if !replayable && len(raw) > 0 {
-		req.Body = io.NopCloser(bytes.NewReader(raw))
-		req.ContentLength = int64(len(raw))
-	}
-	return raw
-}
-
 func snapshotHTTPRequestBody(req *http.Request) ([]byte, error) {
 	if req == nil {
 		return nil, nil
@@ -274,7 +258,7 @@ func openAIAccountProxyURL(account *Account) string {
 }
 
 func (s *OpenAIGatewayService) stickBoundCodexTicketRequest(req *http.Request, account *Account) *http.Request {
-	if req == nil || (s != nil && s.UnifiedAstraTicketsEnabled(req.Context())) {
+	if req == nil {
 		return req
 	}
 	ticket := s.boundCodexTicket(req, account)
@@ -322,18 +306,7 @@ func (s *OpenAIGatewayService) codexTicketPinsEgress(req *http.Request, account 
 	return s.codexTicketPinsEgressFromHeader(req.Context(), req.Header, account)
 }
 
-func borrowedAstraBusinessTicket(ctx context.Context, h http.Header) bool {
-	if ctx == nil || h == nil {
-		return false
-	}
-	shared, _ := ctx.Value(sharedAstraTicketContextKey{}).(*openAICodexTicket)
-	return shared != nil && shared.State != "" && shared.State == h.Get(openAICodexTurnStateHeader)
-}
-
 func (s *OpenAIGatewayService) codexTicketPinsEgressFromHeader(ctx context.Context, h http.Header, account *Account) bool {
-	if borrowedAstraBusinessTicket(ctx, h) {
-		return false
-	}
 	ticket := s.boundCodexTicketFromHeader(ctx, h, account)
 	if ticket == nil {
 		return false
@@ -358,9 +331,6 @@ func (s *OpenAIGatewayService) pinCodexTicketWSAcquire(ctx context.Context, head
 
 func (s *OpenAIGatewayService) pinCodexTicketEgressFromHeader(ctx context.Context, h http.Header, account *Account, proxyURL string) (string, func(), error) {
 	noop := func() {}
-	if borrowedAstraBusinessTicket(ctx, h) {
-		return proxyURL, noop, nil
-	}
 	ticket := s.boundCodexTicketFromHeader(ctx, h, account)
 	if ticket == nil {
 		return proxyURL, noop, nil

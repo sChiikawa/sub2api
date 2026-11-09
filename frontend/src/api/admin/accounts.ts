@@ -1330,40 +1330,11 @@ export interface CodexHarvestFlowSnapshot {
     tickets_blocked: number
   }
   events: CodexHarvestFlowEvent[]
-  gateways?: CodexHarvestGateway[]
-  gateway_turns?: CodexHarvestGatewayTurn[]
   runtime?: CodexHarvestRuntime
-}
-
-export interface CodexHarvestGatewayTurn {
-  account_id: number
-  host: string
-  until?: string
-  remaining_seconds?: number
-  used_hosts?: string[]
-}
-
-export interface CodexHarvestGateway {
-  host: string
-  order: number
-  account_id?: number
-  account_name?: string
-  role?: 'primary' | 'backup' | string
-  has_cookie: boolean
-  status?: 'active' | 'retired' | 'expired' | string
-  reason?: string
-  saved_at?: string
-  expires_at?: string
-  remaining_seconds?: number
 }
 
 export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {
   const { data } = await apiClient.get<CodexHarvestFlowSnapshot>('/admin/accounts/codex-harvest-flow')
-  return data
-}
-
-export async function archiveExpiredCodexGateways(): Promise<{ archived: number }> {
-  const { data } = await apiClient.post<{ archived: number }>('/admin/accounts/codex-harvest-flow/gateways/archive-expired')
   return data
 }
 
@@ -1575,7 +1546,6 @@ export const accountsAPI = {
   refreshOllamaCloudUsage,
   getCodexHarvestFlow,
   updateCodexSkipHarvest,
-  archiveExpiredCodexGateways,
   streamManualCodexHarvest,
   getOpenCodeGoUsageSettings,
   updateOpenCodeGoUsageSettings,

@@ -2,12 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import HarvestFlowView from '../HarvestFlowView.vue'
 
-const { getFlow, updateSkip, archiveGateways } = vi.hoisted(() => ({ getFlow: vi.fn(), updateSkip: vi.fn(), archiveGateways: vi.fn() }))
+const { getFlow, updateSkip } = vi.hoisted(() => ({ getFlow: vi.fn(), updateSkip: vi.fn() }))
 
 vi.mock('@/api/admin/accounts', () => ({
   getCodexHarvestFlow: getFlow,
-  updateCodexSkipHarvest: updateSkip,
-  archiveExpiredCodexGateways: archiveGateways
+  updateCodexSkipHarvest: updateSkip
 }))
 vi.mock('@/components/admin/HarvestPolicyPanel.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/HarvestControlsPanel.vue', () => ({ default: { template: '<section />' } }))
@@ -66,128 +65,6 @@ describe('HarvestFlowView nullable API lists', () => {
       expect(wrapper.text()).toContain('admin.harvestFlow.schedulable')
       expect(wrapper.text()).not.toContain('admin.harvestFlow.unschedulable')
       expect(wrapper.findAll('.bg-emerald-500').length).toBeGreaterThan(0)
-    } finally { wrapper.unmount() }
-  })
-
-  it('logs a borrowed ticket with the lending account name', async () => {
-    getFlow.mockResolvedValue({ ...response(),
-      events: [
-        { id: 'borrow', stage: 'ticket', kind: 'borrow', result: 'reuse', detail: '#1', account_id: 2, account_name: 'borrower', model: 'gpt-6-astra', accepted: true },
-        { id: 'borrow-gone', stage: 'ticket', kind: 'borrow', result: 'reuse', detail: '#99', account_id: 2, account_name: 'borrower' }
-      ]
-    })
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      expect(wrapper.text()).toContain('admin.harvestFlow.borrowedFrom #1 Test account')
-      expect(wrapper.text()).toContain('admin.harvestFlow.borrowedFrom #99')
-      await wrapper.findAll('button').find(button => button.text() === 'admin.harvestFlow.stages.ticket')?.trigger('click')
-      expect(wrapper.findAll('ol li')).toHaveLength(2)
-      expect(wrapper.findAll('ol li .bg-emerald-500')).toHaveLength(2)
-    } finally { wrapper.unmount() }
-  })
-
-  it('lists collected gateways without cookie values', async () => {
-    getFlow.mockResolvedValue({ ...response(),
-      gateways: [
-        { host: 'chat.gateway.unified-125.api.openai.com', order: 1, account_id: 2, account_name: 'bob', role: 'primary', has_cookie: true, status: 'active', saved_at: '2026-10-12T13:21:37Z', expires_at: '2099-10-12T14:21:37Z', remaining_seconds: 1939 },
-        { host: 'chat.gateway.unified-125.api.openai.com', order: 2, account_id: 1, account_name: 'alice', role: 'backup', has_cookie: true, status: 'active', saved_at: '2026-10-12T13:21:37Z', expires_at: '2099-10-12T14:21:37Z', remaining_seconds: 1800 },
-        { host: 'chat.gateway.unified-126.api.openai.com', order: 3, has_cookie: true, status: 'retired', reason: 'credential_expired', saved_at: '2026-10-12T13:08:53Z', expires_at: '2099-10-12T14:08:53Z', remaining_seconds: 1175 }
-      ]
-    })
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      const pool = wrapper.get('[data-testid="gateway-pool"]')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayPoolCount 2 3')
-      expect(pool.text()).toContain('chat.gateway.unified-125.api.openai.com')
-      expect(pool.text()).toContain('chat.gateway.unified-126.api.openai.com')
-      expect(pool.text()).toContain('#2 bob')
-      expect(pool.text()).not.toContain('#1 alice')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayBackups')
-      await pool.get('[data-testid="gateway-backups"]').trigger('click')
-      expect(pool.text()).toContain('#1 alice')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayBackup')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayStatusActive')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayStatusRetired')
-      expect(pool.text()).toContain('admin.harvestFlow.gatewayCredentialExpired')
-      expect(pool.text()).not.toContain('__oailb')
-      expect(pool.text()).not.toContain('__cflb')
-    } finally { wrapper.unmount() }
-  })
-
-  it('archives every expired and retired gateway in one click', async () => {
-    const live = { host: 'chat.gateway.unified-3.api.openai.com', order: 1, has_cookie: true, status: 'active', role: 'primary', remaining_seconds: 600 }
-    const expired = { host: 'chat.gateway.unified-1.api.openai.com', order: 2, has_cookie: true, status: 'expired', remaining_seconds: 0 }
-    const retired = { host: 'chat.gateway.unified-2.api.openai.com', order: 3, has_cookie: true, status: 'retired', reason: 'credential_expired', remaining_seconds: 300 }
-    getFlow.mockResolvedValueOnce({ ...response(), gateways: [expired, retired, live] })
-    getFlow.mockResolvedValue({ ...response(), gateways: [live] })
-    archiveGateways.mockResolvedValue({ archived: 2 })
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      const button = wrapper.get('[data-testid="gateway-archive-expired"]')
-      expect(button.text()).toContain('admin.harvestFlow.gatewayArchiveExpired 2')
-      await button.trigger('click')
-      await flushPromises()
-      expect(archiveGateways).toHaveBeenCalledTimes(1)
-      const pool = wrapper.get('[data-testid="gateway-pool"]')
-      expect(pool.text()).not.toContain('unified-1.api')
-      expect(pool.text()).not.toContain('unified-2.api')
-      expect(pool.text()).toContain('unified-3.api')
-      expect(wrapper.get('[data-testid="gateway-archive-expired"]').attributes('disabled')).toBeDefined()
-    } finally { wrapper.unmount() }
-  })
-
-  it('shows that rotation has not started until an account has a turn', async () => {
-    getFlow.mockResolvedValue(response())
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      expect(wrapper.get('[data-testid="gateway-turns"]').text()).toContain('admin.harvestFlow.gatewayTurnsEmpty')
-    } finally { wrapper.unmount() }
-  })
-
-  it('shows each account on its own gateway turn', async () => {
-    getFlow.mockResolvedValue({ ...response(),
-      accounts: [
-        { id: 7, name: 'alpha', status: 'active', schedulable: true, skip_harvest: false, in_scope: true, ready_count: 0, tickets: [] },
-        { id: 8, name: 'beta', status: 'active', schedulable: true, skip_harvest: false, in_scope: true, ready_count: 0, tickets: [] }
-      ],
-      gateway_turns: [
-        { account_id: 7, host: 'chat.gateway.unified-127.api.openai.com', until: '2099-01-01T00:04:00Z', remaining_seconds: 200, used_hosts: ['chat.gateway.unified-125.api.openai.com', 'chat.gateway.unified-127.api.openai.com'] },
-        { account_id: 8, host: 'chat.gateway.unified-125.api.openai.com', until: '2099-01-01T00:04:00Z', remaining_seconds: 240, used_hosts: ['chat.gateway.unified-125.api.openai.com'] }
-      ]
-    })
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      const turns = wrapper.get('[data-testid="gateway-turns"]')
-      expect(turns.text()).toContain('#7 alpha')
-      expect(turns.text()).toContain('chat.gateway.unified-127.api.openai.com')
-      expect(turns.text()).toContain('#8 beta')
-      expect(turns.text()).toContain('chat.gateway.unified-125.api.openai.com')
-      expect(turns.text()).toContain('admin.harvestFlow.gatewayTurnRemaining')
-      expect(turns.text()).toContain('admin.harvestFlow.gatewayTurnUsed')
-      expect(turns.text()).not.toContain('admin.harvestFlow.gatewayTurnsEmpty')
-    } finally { wrapper.unmount() }
-  })
-
-  it('logs a business request that borrowed a candy-passed ticket', async () => {
-    getFlow.mockResolvedValue({ ...response(),
-      events: [
-        { id: 'use', stage: 'ticket', kind: 'business_borrow', result: 'candy_passed', detail: '#1', account_id: 2, account_name: 'borrower', model: 'gpt-6-astra', node: 'chat.gateway.unified-42.api.openai.com' }
-      ]
-    })
-    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
-    try {
-      await flushPromises()
-      expect(wrapper.text()).toContain('admin.harvestFlow.borrowedForRequest #1 Test account')
-      expect(wrapper.text()).toContain('gpt-6-astra')
-      expect(wrapper.text()).toContain('chat.gateway.unified-42.api.openai.com')
-      await wrapper.findAll('button').find(button => button.text() === 'admin.harvestFlow.stages.ticket')?.trigger('click')
-      expect(wrapper.findAll('ol li')).toHaveLength(1)
-      expect(wrapper.findAll('ol li .bg-emerald-500')).toHaveLength(1)
     } finally { wrapper.unmount() }
   })
 
@@ -573,22 +450,6 @@ describe('HarvestFlowView account cards', () => {
     expect(cards[0]!.text()).not.toContain('admin.harvestFlow.skipHarvestHint')
     expect(cards[0]!.text()).toContain('admin.harvestFlow.availability.available')
     expect(cards[1]!.text()).toContain('admin.harvestFlow.availability.available')
-  })
-
-  it('paginates the ticket account list', async () => {
-    const data = accountsPayload()
-    const template = data.accounts[0]!
-    data.accounts = Array.from({ length: 25 }, (_, index) => ({ ...template, id: index + 1, name: `Account ${index + 1}` }))
-    getFlow.mockResolvedValue(data)
-    wrapper = mountFlow()
-    await flushPromises()
-    expect(wrapper.findAll('[data-test="harvest-account-card"]')).toHaveLength(10)
-    expect(wrapper.text()).toContain('Account 1')
-    expect(wrapper.text()).not.toContain('Account 11')
-    await wrapper.get('[data-test="harvest-account-pagination"] button[aria-label="pagination.goToPage 3"]').trigger('click')
-    const cards = wrapper.findAll('[data-test="harvest-account-card"]')
-    expect(cards).toHaveLength(5)
-    expect(cards[0]!.text()).toContain('Account 21')
   })
 
   it('counts remaining from expires_at instead of a stale snapshot second', async () => {

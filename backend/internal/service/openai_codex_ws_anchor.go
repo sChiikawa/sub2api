@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -60,28 +61,25 @@ func codexAstraCompleted(response gjson.Result) bool {
 // Anchors are scoped to an authenticated API key, group, explicit client
 // thread/session, upstream account and credential revision. Callers explicitly
 // supply previous_response_id and delta input; we never attach unrelated history.
-// Members are derived automatically, so a request that cannot be anchored
-// (no session identity, WSv2 off, busy, unknown continuation, capacity) is
-// forwarded normally rather than rejected; a nil finish means no anchor.
-func (s *OpenAIGatewayService) prepareCodexWSAnchor(ctx context.Context, c *gin.Context, account *Account, body []byte) (context.Context, func(*OpenAIForwardResult, error)) {
+func (s *OpenAIGatewayService) prepareCodexWSAnchor(ctx context.Context, c *gin.Context, account *Account, body []byte) (context.Context, func(*OpenAIForwardResult, error), error) {
 	if s == nil || s.cfg == nil {
-		return ctx, nil
+		return ctx, nil, nil
 	}
 	settings := s.cfg.AstraRouting(ctx)
 	if !settings.WSSession.Enabled || account == nil || !slices.Contains(settings.WSSession.AccountIDs, account.ID) || !account.IsOpenAIOAuthLike() || account.IsOpenAIPassthroughEnabled() || c == nil || c.Request == nil || isOpenAIResponsesCompactPath(c) || gjson.GetBytes(body, "model").String() != "gpt-6-astra" || account.GetMappedModel("gpt-6-astra") != "gpt-6-astra" {
-		return ctx, nil
+		return ctx, nil, nil
 	}
-	if settings.WSSession.Validate() != nil {
-		return ctx, nil
+	if err := settings.WSSession.Validate(); err != nil {
+		return ctx, nil, err
 	}
 	apiKeyID := getAPIKeyIDFromContext(c)
 	scope, _ := resolveOpenAIWSExecutionScope(c, body, apiKeyID)
 	if apiKeyID <= 0 || scope == "" {
-		return ctx, nil
+		return ctx, nil, errors.New("codex WS anchor requires an authenticated API key and explicit session/thread identity")
 	}
 	previous := gjson.GetBytes(body, "previous_response_id").String()
 	if s.getOpenAIWSProtocolResolver().Resolve(account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
-		return ctx, nil
+		return ctx, nil, errors.New("codex WS anchor requires account and global WSv2 to be enabled")
 	}
 	key := codexWSAnchorKey{account: account.ID, apiKey: apiKeyID, group: getOpenAIGroupIDFromContext(c), scope: scope, identity: sha256.Sum256([]byte(account.GetCredential("chatgpt_account_id") + "\x00" + account.GetCredential("access_token")))}
 	scope += ":" + settings.Revision
@@ -98,11 +96,18 @@ func (s *OpenAIGatewayService) prepareCodexWSAnchor(ctx context.Context, c *gin.
 			delete(store.entries, k)
 		}
 	}
-	entry, found := store.entries[key]
-	if store.busy[key] || (previous != "" && (!found || previous != entry.responseID || !now.Before(entry.expires))) ||
-		(!found && len(store.entries)+len(store.busy) >= 1024) {
+	if store.busy[key] {
 		store.mu.Unlock()
-		return ctx, nil
+		return ctx, nil, errors.New("codex WS anchor session already has an active request")
+	}
+	entry, found := store.entries[key]
+	if previous != "" && (!found || previous != entry.responseID || !now.Before(entry.expires)) {
+		store.mu.Unlock()
+		return ctx, nil, errors.New("codex WS anchor is missing, expired or belongs to another session")
+	}
+	if !found && len(store.entries)+len(store.busy) >= 1024 {
+		store.mu.Unlock()
+		return ctx, nil, errors.New("codex WS anchor capacity reached")
 	}
 	turn := &codexWSAnchorTurn{previousID: previous, scope: fmt.Sprintf("%d:%d:%s:%x", key.apiKey, key.group, key.scope, key.identity), expires: entry.expires}
 	if previous != "" {
@@ -144,7 +149,7 @@ func (s *OpenAIGatewayService) prepareCodexWSAnchor(ctx context.Context, c *gin.
 		entry.proxyURL = turn.proxyURL
 		store.entries[key] = entry
 	}
-	return context.WithValue(ctx, codexWSAnchorContextKey{}, turn), finish
+	return context.WithValue(ctx, codexWSAnchorContextKey{}, turn), finish, nil
 }
 
 func replaceCodexWSAnchorCookie(h http.Header, value string) {

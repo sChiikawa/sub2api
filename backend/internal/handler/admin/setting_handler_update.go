@@ -25,19 +25,15 @@ import (
 
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
-	ExcelBPSEnabled                    *bool                            `json:"excel_bps_enabled"`
-	OpenAICodexTicketHarvestScope      *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
-	OpenAICodexTicketStrictResponse    *bool                            `json:"openai_codex_ticket_strict_response"`
-	OpenAICodexTicketCandyObservation  *bool                            `json:"openai_codex_ticket_candy_observation"`
-	OpenAICodexGatewayCandyCheck       *bool                            `json:"openai_codex_gateway_candy_check"`
-	OpenAICodexGatewayCandyPrefetch    *bool                            `json:"openai_codex_gateway_candy_prefetch"`
-	OpenAICodexGatewayCandyPrefer      *bool                            `json:"openai_codex_gateway_candy_prefer"`
-	OpenAICodexGatewayCandyConcurrency *int                             `json:"openai_codex_gateway_candy_concurrency"`
-	OpenAICodexTicketFailClosed        *bool                            `json:"openai_codex_ticket_fail_closed"`
-	OpenAICodexTicketStrategy          *string                          `json:"openai_codex_ticket_strategy"`
-	PrismBrowserEnabled                bool                             `json:"prism_browser_enabled"`
-	PrismBrowserBaseURL                string                           `json:"prism_browser_base_url"`
-	PrismBrowserAPIKey                 string                           `json:"prism_browser_api_key"`
+	ExcelBPSEnabled                   *bool                            `json:"excel_bps_enabled"`
+	OpenAICodexTicketHarvestScope     *service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
+	OpenAICodexTicketStrictResponse   *bool                            `json:"openai_codex_ticket_strict_response"`
+	OpenAICodexTicketCandyObservation *bool                            `json:"openai_codex_ticket_candy_observation"`
+	OpenAICodexTicketFailClosed       *bool                            `json:"openai_codex_ticket_fail_closed"`
+	OpenAICodexTicketStrategy         *string                          `json:"openai_codex_ticket_strategy"`
+	PrismBrowserEnabled               bool                             `json:"prism_browser_enabled"`
+	PrismBrowserBaseURL               string                           `json:"prism_browser_base_url"`
+	PrismBrowserAPIKey                string                           `json:"prism_browser_api_key"`
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
 	LoginRateLimitEnabled               *bool                        `json:"login_rate_limit_enabled"`      // 省略=保持现值
@@ -2137,30 +2133,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexTicketCandyObservation
 		}(),
-		OpenAICodexGatewayCandyCheck: func() bool {
-			if req.OpenAICodexGatewayCandyCheck != nil {
-				return *req.OpenAICodexGatewayCandyCheck
-			}
-			return previousSettings.OpenAICodexGatewayCandyCheck
-		}(),
-		OpenAICodexGatewayCandyPrefetch: func() bool {
-			if req.OpenAICodexGatewayCandyPrefetch != nil {
-				return *req.OpenAICodexGatewayCandyPrefetch
-			}
-			return previousSettings.OpenAICodexGatewayCandyPrefetch
-		}(),
-		OpenAICodexGatewayCandyPrefer: func() bool {
-			if req.OpenAICodexGatewayCandyPrefer != nil {
-				return *req.OpenAICodexGatewayCandyPrefer
-			}
-			return previousSettings.OpenAICodexGatewayCandyPrefer
-		}(),
-		OpenAICodexGatewayCandyConcurrency: func() int {
-			if req.OpenAICodexGatewayCandyConcurrency != nil {
-				return service.NormalizeGatewayCandyConcurrency(*req.OpenAICodexGatewayCandyConcurrency)
-			}
-			return previousSettings.OpenAICodexGatewayCandyConcurrency
-		}(),
 		OpenAICodexTicketFailClosed: func() bool {
 			if req.OpenAICodexTicketFailClosed != nil {
 				return *req.OpenAICodexTicketFailClosed
@@ -2811,10 +2783,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexTicketStrategy:                              updatedSettings.OpenAICodexTicketStrategy,
 		OpenAICodexTicketStrictResponse:                        updatedSettings.OpenAICodexTicketStrictResponse,
 		OpenAICodexTicketCandyObservation:                      updatedSettings.OpenAICodexTicketCandyObservation,
-		OpenAICodexGatewayCandyCheck:                           updatedSettings.OpenAICodexGatewayCandyCheck,
-		OpenAICodexGatewayCandyPrefetch:                        updatedSettings.OpenAICodexGatewayCandyPrefetch,
-		OpenAICodexGatewayCandyPrefer:                          updatedSettings.OpenAICodexGatewayCandyPrefer,
-		OpenAICodexGatewayCandyConcurrency:                     updatedSettings.OpenAICodexGatewayCandyConcurrency,
 		OpenAICodexTicketFailClosed:                            updatedSettings.OpenAICodexTicketFailClosed,
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		OpenAICodexTicketModels:                                updatedSettings.OpenAICodexTicketModels,

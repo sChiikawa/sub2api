@@ -120,97 +120,13 @@
           <HarvestCoverageCard :coverage="snapshot.coverage" :generated-at="snapshot.generated_at" />
         </div>
 
-        <div class="card p-5" data-testid="gateway-pool">
-          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayPool') }}</h2>
-            <div class="flex flex-wrap items-center gap-3">
-              <span class="text-xs text-gray-400">{{ t('admin.harvestFlow.gatewayPoolCount', { unique: gatewayUniqueCount, total: snapshot.gateways?.length || 0 }) }}</span>
-              <button
-                type="button"
-                data-testid="gateway-archive-expired"
-                class="btn btn-secondary btn-sm"
-                :disabled="archivingGateways || !gatewayExpiredCount"
-                @click="archiveExpiredGateways"
-              >
-                {{ t('admin.harvestFlow.gatewayArchiveExpired', { n: gatewayExpiredCount }) }}
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.gatewayPoolHint') }}</p>
-          <div class="mt-3 rounded-xl border border-gray-100 p-3 dark:border-dark-700" data-testid="gateway-turns">
-            <h3 class="text-xs font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.gatewayTurns') }}</h3>
-            <p v-if="!snapshot.gateway_turns?.length" class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.harvestFlow.gatewayTurnsEmpty') }}</p>
-            <ul v-else class="mt-2 space-y-2">
-              <li v-for="turn in snapshot.gateway_turns" :key="turn.account_id" class="text-xs text-gray-600 dark:text-gray-300">
-                <span class="font-medium text-gray-900 dark:text-white">#{{ turn.account_id }} {{ gatewayTurnName(turn) }}</span>
-                <span class="mt-0.5 block font-mono text-[11px]">{{ turn.host }}</span>
-                <span class="mt-0.5 block">{{ gatewayTurnRemainText(turn) }}</span>
-                <span class="mt-0.5 block text-[11px] text-gray-400">{{ t('admin.harvestFlow.gatewayTurnUsed', { hosts: (turn.used_hosts || []).join('、') }) }}</span>
-              </li>
-            </ul>
-          </div>
-          <p v-if="!snapshot.gateways?.length" class="mt-3 text-sm text-gray-500">{{ t('admin.harvestFlow.gatewayPoolEmpty') }}</p>
-          <div v-else class="mt-3 overflow-x-auto">
-            <table class="min-w-full text-left text-sm">
-              <tbody>
-                <template v-for="group in gatewayGroups" :key="group.host">
-                  <tr v-for="gateway in group.rows" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-100 dark:border-dark-700">
-                    <td class="py-2 pr-3 align-middle">
-                      <span class="break-all font-mono text-xs text-gray-800 dark:text-gray-200">{{ gateway.host }}</span>
-                      <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
-                    </td>
-                    <td class="whitespace-nowrap py-2 pr-3 align-middle">
-                      <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
-                      <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
-                    </td>
-                    <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
-                    <td class="py-2 pr-3 align-middle">
-                      <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
-                        <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
-                      </div>
-                    </td>
-                    <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
-                  </tr>
-                  <tr v-if="group.backups.length" class="border-t border-gray-50 dark:border-dark-800">
-                    <td colspan="5" class="py-1.5">
-                      <button type="button" class="text-xs text-sky-700 dark:text-sky-300" data-testid="gateway-backups" :aria-expanded="!!expandedGatewayHosts[group.host]" @click="toggleGatewayBackups(group.host)">
-                        {{ expandedGatewayHosts[group.host] ? t('admin.harvestFlow.gatewayBackupsHide', { n: group.backups.length }) : t('admin.harvestFlow.gatewayBackups', { n: group.backups.length }) }}
-                      </button>
-                    </td>
-                  </tr>
-                  <template v-if="expandedGatewayHosts[group.host]">
-                    <tr v-for="gateway in group.backups" :key="`${gateway.host}-${gateway.account_id || 0}-${gateway.order}`" class="border-t border-gray-50 bg-gray-50/60 dark:border-dark-800 dark:bg-dark-800/40">
-                      <td class="py-2 pr-3 pl-4 align-middle">
-                        <span class="break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ gateway.host }}</span>
-                        <span v-if="gateway.account_id" class="mt-0.5 block text-[11px] text-gray-400">#{{ gateway.account_id }} {{ gateway.account_name }}</span>
-                      </td>
-                      <td class="whitespace-nowrap py-2 pr-3 align-middle">
-                        <span class="rounded-full px-2 py-0.5 text-[11px]" :class="gatewayStatusClass(gateway.status)">{{ gatewayStatusLabel(gateway.status) }}</span>
-                        <span class="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">{{ t('admin.harvestFlow.gatewayBackup') }}</span>
-                        <span v-if="gateway.status === 'retired'" class="ml-2 text-[11px] text-rose-500">{{ t('admin.harvestFlow.gatewayCredentialExpired') }}</span>
-                      </td>
-                      <td class="whitespace-nowrap py-2 pr-3 align-middle text-xs text-gray-600 dark:text-gray-300">{{ gatewayRemainText(gateway) }}</td>
-                      <td class="py-2 pr-3 align-middle">
-                        <div class="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
-                          <div class="h-1.5 rounded-full" :class="gatewayBarClass(gateway)" :style="{ width: gatewayBarWidth(gateway) }" />
-                        </div>
-                      </td>
-                      <td class="whitespace-nowrap py-2 text-right align-middle text-xs text-gray-400">{{ formatClock(gateway.saved_at) }}</td>
-                    </tr>
-                  </template>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-5">
           <div class="card p-5 xl:col-span-2">
             <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.harvestFlow.accounts') }}</h2>
             <div v-if="!snapshot.accounts?.length" class="text-sm text-gray-500">{{ t('admin.harvestFlow.noAccounts') }}</div>
             <div v-else class="grid grid-cols-1 gap-3">
               <div
-                v-for="account in pagedAccounts"
+                v-for="account in snapshot.accounts"
                 :key="account.id"
                 data-test="harvest-account-card"
                 class="flex min-h-[13.75rem] flex-col rounded-2xl border border-gray-100 p-4 dark:border-dark-700"
@@ -260,16 +176,6 @@
                 </div>
               </div>
             </div>
-            <Pagination
-              v-if="(snapshot.accounts?.length ?? 0) > 0"
-              data-test="harvest-account-pagination"
-              class="mt-4 rounded-xl border"
-              :total="snapshot.accounts?.length ?? 0"
-              :page="accountPage"
-              :page-size="accountPageSize"
-              @update:page="accountPage = $event"
-              @update:page-size="accountPageSize = $event; accountPage = 1"
-            />
           </div>
 
           <div class="card min-w-0 p-5 xl:col-span-3">
@@ -332,73 +238,19 @@
 import HarvestCoverageCard from '@/components/admin/HarvestCoverageCard.vue'
 import HarvestAccountCoverage from '@/components/admin/HarvestAccountCoverage.vue'
 import HarvestPolicyPanel from '@/components/admin/HarvestPolicyPanel.vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import HarvestControlsPanel from '@/components/admin/HarvestControlsPanel.vue'
 import HarvestNodeRecords from '@/components/admin/HarvestNodeRecords.vue'
-import { archiveExpiredCodexGateways, getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket, type CodexHarvestGateway, type CodexHarvestGatewayTurn } from '@/api/admin/accounts'
+import { getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket } from '@/api/admin/accounts'
 import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarvestAvailability } from '@/utils/harvestAvailability'
 
 const { t } = useI18n()
 const snapshot = ref<CodexHarvestFlowSnapshot | null>(null)
-const accountPage = ref(1)
-const accountPageSize = ref(10)
-const pagedAccounts = computed(() => {
-  const accounts = snapshot.value?.accounts || []
-  const pages = Math.max(1, Math.ceil(accounts.length / accountPageSize.value))
-  const page = Math.min(Math.max(accountPage.value, 1), pages)
-  return accounts.slice((page - 1) * accountPageSize.value, page * accountPageSize.value)
-})
-watch(() => snapshot.value?.accounts?.length ?? 0, (total) => {
-  const pages = Math.max(1, Math.ceil(total / accountPageSize.value))
-  if (accountPage.value > pages) accountPage.value = pages
-})
-const expandedGatewayHosts = ref<Record<string, boolean>>({})
-const archivingGateways = ref(false)
-const gatewayExpiredCount = computed(() => (snapshot.value?.gateways || []).filter(gateway => gateway.status === 'expired' || gateway.status === 'retired').length)
-async function archiveExpiredGateways() {
-  if (disposed || archivingGateways.value || !gatewayExpiredCount.value) return
-  archivingGateways.value = true
-  errorMessage.value = ''
-  let archived = false
-  try {
-    await archiveExpiredCodexGateways()
-    archived = true
-  } catch (error) {
-    if (disposed) return
-    const err = error as { message?: string }
-    errorMessage.value = err?.message || String(error)
-  } finally {
-    if (!disposed) archivingGateways.value = false
-  }
-  if (archived && !disposed) await fetchFlow()
-}
-const gatewayUniqueCount = computed(() => new Set((snapshot.value?.gateways || []).map(gateway => gateway.host)).size)
-const gatewayGroups = computed(() => {
-  const groups: { host: string; rows: CodexHarvestGateway[]; backups: CodexHarvestGateway[] }[] = []
-  for (const gateway of snapshot.value?.gateways || []) {
-    let group = groups.find(item => item.host === gateway.host)
-    if (!group) {
-      group = { host: gateway.host, rows: [], backups: [] }
-      groups.push(group)
-    }
-    if (gateway.role === 'backup') group.backups.push(gateway)
-    else group.rows.push(gateway)
-  }
-  for (const group of groups) {
-    if (!group.rows.length && group.backups.length) group.rows.push(group.backups.shift()!)
-  }
-  return groups
-})
-
-function toggleGatewayBackups(host: string) {
-  expandedGatewayHosts.value = { ...expandedGatewayHosts.value, [host]: !expandedGatewayHosts.value[host] }
-}
 const accountNames = computed(() => Object.fromEntries((snapshot.value?.accounts || []).map(account => [account.id, account.name])))
 const loading = ref(false)
 const refreshing = ref(false)
@@ -419,7 +271,7 @@ const filteredEvents = computed(() => {
   const events = snapshot.value?.events || []
   if (eventFilter.value === 'all') return events
   if (eventFilter.value === 'shape') {
-    return events.filter((event: CodexHarvestFlowEvent) => event.stage === 'probe' || event.kind === 'accept' || event.kind === 'borrow' || event.kind === 'reject')
+    return events.filter((event: CodexHarvestFlowEvent) => event.stage === 'probe' || event.kind === 'accept' || event.kind === 'reject')
   }
   return events.filter((event: CodexHarvestFlowEvent) => event.stage === eventFilter.value)
 })
@@ -482,7 +334,7 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'borrow' || kind === 'business_borrow' || kind === 'gateway_seen' || kind === 'gateway_turn' || kind === 'schedule_join' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
   if (kind === 'schedule_leave' || kind === 'probe_miss') {
@@ -520,12 +372,6 @@ function resultLabel(result?: string) {
 
 function eventDetail(event: CodexHarvestFlowEvent) {
   if (event.kind === 'reject') return t('admin.harvestFlow.ticketRejected')
-  if (event.kind === 'borrow' || event.kind === 'business_borrow') {
-    const id = Number(/^#(\d+)$/.exec(event.detail || '')?.[1])
-    const source = id && accountNames.value[id] ? `#${id} ${accountNames.value[id]}` : event.detail || '—'
-    const key = event.kind === 'business_borrow' ? 'admin.harvestFlow.borrowedForRequest' : 'admin.harvestFlow.borrowedFrom'
-    return t(key, { source, model: event.model || '—', gateway: event.node || '—' })
-  }
   if (event.kind === 'probe_hit') {
     return event.reason === 'probe_verified' ? t('admin.harvestFlow.probeVerified') : t('admin.harvestFlow.probeIncomplete')
   }
@@ -538,9 +384,7 @@ function eventDetail(event: CodexHarvestFlowEvent) {
     const mode = event.result || ''
     const modeKey = mode === 'groups' ? 'modeGroups' : mode === 'model' ? 'modeModel' : mode === 'account' ? 'modeAccount' : ''
     const modeLabel = modeKey ? lookupLabel('admin.astraGateway', modeKey) : ''
-    const reason = reasonLabel(event.reason)
-    const extra = event.detail && event.detail !== event.reason && event.detail !== reason ? event.detail : ''
-    return [reason, extra, modeLabel].filter(Boolean).join(' · ') || resultLabel(event.result)
+    return [reasonLabel(event.reason), modeLabel].filter(Boolean).join(' · ') || event.detail || resultLabel(event.result)
   }
   return event.detail || reasonLabel(event.reason) || resultLabel(event.result)
 }
@@ -606,56 +450,6 @@ function recoverText(account: CodexHarvestFlowAccount) {
   return recovered.date
     ? t('admin.harvestFlow.availability.recoverLater', { date: recovered.date, time: recovered.clock })
     : t('admin.harvestFlow.availability.recoverToday', { time: recovered.clock })
-}
-
-function gatewayTurnName(turn: CodexHarvestGatewayTurn) {
-  return snapshot.value?.accounts?.find(account => account.id === turn.account_id)?.name || ''
-}
-
-function gatewayTurnRemainText(turn: CodexHarvestGatewayTurn) {
-  const left = secondsUntil(turn.until) ?? Math.max(0, turn.remaining_seconds || 0)
-  if (left <= 0) return t('admin.harvestFlow.gatewayTurnDue')
-  return t('admin.harvestFlow.gatewayTurnRemaining', { time: formatRemaining(left) })
-}
-
-function gatewayStatusLabel(status?: string) {
-  if (status === 'retired') return t('admin.harvestFlow.gatewayStatusRetired')
-  if (status === 'expired') return t('admin.harvestFlow.gatewayStatusExpired')
-  return t('admin.harvestFlow.gatewayStatusActive')
-}
-
-function gatewayStatusClass(status?: string) {
-  if (status === 'retired') return 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300'
-  if (status === 'expired') return 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-300'
-  return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-}
-
-function gatewayRemainingSeconds(gateway: CodexHarvestGateway) {
-  if (gateway.status === 'expired') return 0
-  return secondsUntil(gateway.expires_at) ?? Math.max(0, gateway.remaining_seconds || 0)
-}
-
-function gatewayRemainText(gateway: CodexHarvestGateway) {
-  const left = gatewayRemainingSeconds(gateway)
-  if (gateway.status === 'expired' || left <= 0) return t('admin.harvestFlow.gatewayStatusExpired')
-  const minutes = Math.floor(left / 60)
-  const seconds = left % 60
-  if (minutes <= 0) return t('admin.harvestFlow.durationSeconds', { seconds })
-  return t('admin.harvestFlow.gatewayCountdown', { minutes, seconds: String(seconds).padStart(2, '0') })
-}
-
-function gatewayBarWidth(gateway: CodexHarvestGateway) {
-  const left = gatewayRemainingSeconds(gateway)
-  const pct = Math.max(0, Math.min(100, (left / 3600) * 100))
-  return `${pct}%`
-}
-
-function gatewayBarClass(gateway: CodexHarvestGateway) {
-  const left = gatewayRemainingSeconds(gateway)
-  if (gateway.status === 'expired' || left <= 0) return 'bg-gray-300'
-  if (left >= 30 * 60) return 'bg-emerald-500'
-  if (left >= 10 * 60) return 'bg-amber-500'
-  return 'bg-rose-500'
 }
 
 function formatRemaining(seconds: number) {

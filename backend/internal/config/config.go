@@ -1091,9 +1091,7 @@ type CodexGatewayPinConfig struct {
 	TTLSeconds          int     `mapstructure:"ttl_seconds" json:"ttl_seconds"`
 	Enabled             bool    `mapstructure:"enabled" json:"enabled"`
 	SourceAccountIDs    []int64 `mapstructure:"source_account_ids" json:"source_account_ids"`
-	// TargetAccountIDs is derived by the settings loader: every harvest-scope
-	// account other than the sources. Persisted values are ignored.
-	TargetAccountIDs []int64 `mapstructure:"target_account_ids" json:"target_account_ids"`
+	TargetAccountIDs    []int64 `mapstructure:"target_account_ids" json:"target_account_ids"`
 }
 
 func (c CodexGatewayPinConfig) Validate() error {
@@ -1109,8 +1107,8 @@ func (c CodexGatewayPinConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if len(c.SourceAccountIDs) == 0 || len(c.SourceAccountIDs) > 64 {
-		return fmt.Errorf("gateway.codex_gateway_pin requires 1–64 source_account_ids")
+	if len(c.SourceAccountIDs) == 0 || len(c.TargetAccountIDs) == 0 || len(c.SourceAccountIDs) > 64 || len(c.TargetAccountIDs) > 64 {
+		return fmt.Errorf("gateway.codex_gateway_pin requires 1–64 source_account_ids and target_account_ids")
 	}
 	seen := map[int64]bool{}
 	for _, ids := range [][]int64{c.SourceAccountIDs, c.TargetAccountIDs} {
@@ -1127,10 +1125,8 @@ func (c CodexGatewayPinConfig) Validate() error {
 // CodexWSAnchorConfig promotes explicitly continued, qualified Astra requests
 // to a pinned WS connection. The account's normal WS switches still apply.
 type CodexWSAnchorConfig struct {
-	TTLSeconds int  `mapstructure:"ttl_seconds" json:"ttl_seconds"`
-	Enabled    bool `mapstructure:"enabled" json:"enabled"`
-	// AccountIDs is derived by the settings loader: route-pool accounts whose
-	// WSv2 is already enabled. Persisted values are ignored.
+	TTLSeconds int     `mapstructure:"ttl_seconds" json:"ttl_seconds"`
+	Enabled    bool    `mapstructure:"enabled" json:"enabled"`
 	AccountIDs []int64 `mapstructure:"account_ids" json:"account_ids"`
 }
 
@@ -1140,6 +1136,9 @@ func (c CodexWSAnchorConfig) Validate() error {
 	}
 	if !c.Enabled {
 		return nil
+	}
+	if len(c.AccountIDs) == 0 || len(c.AccountIDs) > 64 {
+		return fmt.Errorf("gateway.codex_ws_anchor requires 1–64 account_ids")
 	}
 	seen := map[int64]bool{}
 	for _, id := range c.AccountIDs {
@@ -1158,7 +1157,7 @@ type GatewayConfig struct {
 	// API key remain outside account credentials.
 	PrismBrowser  GatewayPrismBrowserConfig `mapstructure:"prism_browser"`
 	CodexWSAnchor CodexWSAnchorConfig       `mapstructure:"codex_ws_anchor"`
-	// CodexGatewayPin shares qualified source routing cookies with other harvest-scope accounts.
+	// CodexGatewayPin shares qualified source routing cookies with selected targets.
 	// Disabled by default; applies only to ChatGPT HTTP Responses requests.
 	CodexGatewayPin CodexGatewayPinConfig `mapstructure:"codex_gateway_pin"`
 	// MinOutputTokens is the minimum max_output_tokens used when

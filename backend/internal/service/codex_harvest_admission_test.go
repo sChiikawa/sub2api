@@ -32,7 +32,7 @@ func TestCodex780AdmissionRequiresOriginalTicketContinuation(t *testing.T) {
 			account := ticketTestAccount(1)
 			cfg := config.OpenAICodexTicketConfig{TargetLength: 780, TTLSeconds: 240}
 			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: cfg}}}
-			svc.codexHarvest = &CodexHarvestService{current: CodexHarvestControls{Transport: "sse", TargetGateway: "any"}, loadedUntil: time.Now().Add(time.Hour)}
+			// Deliberately differs from the saved/default unified-88 setting.
 			pair := mint780Pair(time.Now().Add(time.Hour), "unified-123")
 			state := mint780State(time.Now().Add(-2 * time.Second))
 			ctx, cancel := context.WithCancel(context.Background())

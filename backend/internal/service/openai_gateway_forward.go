@@ -298,8 +298,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	accelerateHTTPSSE := wsDecision.Reason == openAIOAuthWSSSEAccelerationReason
 	var anchorFinish func(*OpenAIForwardResult, error)
 	if !openAIAgentRecoveryBound(ctx) {
-		// 本地锚点无法建立时继续普通转发，不把缺会话或忙会话当成请求失败。
-		anchorCtx, finish := s.prepareCodexWSAnchor(ctx, c, account, body)
+		anchorCtx, finish, anchorErr := s.prepareCodexWSAnchor(ctx, c, account, body)
+		if anchorErr != nil {
+			return nil, anchorErr
+		}
 		anchorFinish = finish
 		if anchorFinish != nil {
 			ctx = anchorCtx

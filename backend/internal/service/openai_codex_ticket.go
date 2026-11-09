@@ -752,11 +752,6 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 		return nil
 	}
 	model = normalizeOpenAICodexTicketModel(model)
-	if s.shouldRotateCodexOAuthGateway(ctx, account, model) {
-		s.assignBusinessGatewayCookie(h, account, model)
-		h.Del(openAICodexTurnStateHeader)
-		return nil
-	}
 	if model == "" || !s.openAICodexTicketGatedModel(model) {
 		return nil
 	}
@@ -769,21 +764,12 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	if !openAICodexSkipHarvest(account) && cfg.FailClosed && s.openAICodexTicketHarvestExcluded(account) {
 		return denyOpenAITicket()
 	}
-	protocol := "sse"
-	if (len(transport) > 0 && transport[0] == "websocket") || h.Get("OpenAI-Beta") == openAIWSBetaV1Value || h.Get("OpenAI-Beta") == openAIWSBetaV2Value || strings.EqualFold(h.Get("Upgrade"), "websocket") {
-		protocol = "websocket"
-	}
-	// Non-source business requests wear a candy-passed ticket. Cookies and
-	// egress are attached when the request is sent; this only keeps admission
-	// from rejecting an account that has no ticket of its own.
-	if protocol == "sse" {
-		if shared := s.memoryCandyAstraTicket(account.ID, model); shared != nil {
-			h.Set(openAICodexTurnStateHeader, shared.State)
-			return nil
-		}
-	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
 	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
+		protocol := "sse"
+		if (len(transport) > 0 && transport[0] == "websocket") || h.Get("OpenAI-Beta") == openAIWSBetaV1Value || h.Get("OpenAI-Beta") == openAIWSBetaV2Value || strings.EqualFold(h.Get("Upgrade"), "websocket") {
+			protocol = "websocket"
+		}
 		if ticket.Transport != "" && ticket.Transport != protocol {
 			if h.Get(openAICodexTurnStateHeader) == ticket.State {
 				h.Del(openAICodexTurnStateHeader)
@@ -861,9 +847,6 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 	if !s.openAICodexTicketGatedModel(model) {
 		return false
 	}
-	if s.UnifiedAstraTicketsEnabled(context.Background()) {
-		return false
-	}
 	if openAICodexSkipHarvest(account) {
 		return false
 	}
@@ -871,10 +854,7 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 		return true
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
-		return false
-	}
-	return s.memoryCandyAstraTicket(account.ID, model) == nil
+	return !ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
 }
 
 func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account, requestedModel string, requireCompact bool) bool {
@@ -882,7 +862,7 @@ func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account
 		return false
 	}
 	outbound := s.openAICodexTicketOutboundModel(account, requestedModel, requireCompact)
-	if account.isPrismBrowserUpstreamModelEnabled(outbound) || !isOpenAICodexTicketAccount(account, outbound) {
+	if !isOpenAICodexTicketAccount(account, outbound) {
 		return false
 	}
 	model := normalizeOpenAICodexTicketModel(outbound)
@@ -894,10 +874,7 @@ func (s *OpenAIGatewayService) openAICodexTicketReadyForRequest(account *Account
 		return false
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	if ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
-		return true
-	}
-	return s.memoryCandyAstraTicket(account.ID, model) != nil
+	return ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
 }
 
 func extraTruthy(value any) bool {
@@ -1006,9 +983,9 @@ func (s *OpenAIGatewayService) openAICodexTicketHarvestExcluded(account *Account
 	return !scope.includes(account)
 }
 
-// Sticky sessions bypass account priority: a leftover 292 on a low-priority
-// account (for example a 5x that is no longer harvested) would pin traffic
-// even after a higher-priority 20x harvests.
+// Sticky sessions ignore account priority. A leftover 292 on a low-priority
+// account (for example a 5x that is no longer harvested) would otherwise pin
+// traffic forever even after a higher-priority account such as 20x harvests.
 func (s *OpenAIGatewayService) openAICodexTicketShouldYieldStickyTo(sticky *Account, candidates []*Account, requestedModel string, requireCompact bool, excludedIDs map[int64]struct{}) bool {
 	if s == nil || sticky == nil || !s.openAICodexTicketEnabled() {
 		return false
@@ -1118,9 +1095,7 @@ func (s *OpenAIGatewayService) StartOpenAICodexTicketHarvester() {
 		defer close(done)
 		coverageDone := make(chan struct{})
 		go func() { defer close(coverageDone); s.harvestCoverageLoop(ctx) }()
-		prefetchDone := make(chan struct{})
-		go func() { defer close(prefetchDone); s.gatewayCandyPrefetchLoop(ctx) }()
-		defer func() { cancel(); <-coverageDone; <-prefetchDone }()
+		defer func() { cancel(); <-coverageDone }()
 		s.openAICodexTicketHarvestLoop(ctx)
 	}()
 	logger.L().Info("openai_codex_ticket harvester started",
@@ -1167,7 +1142,6 @@ func (s *OpenAIGatewayService) openAICodexTicketHarvestLoop(ctx context.Context)
 		case <-settingsWake:
 			s.resetHarvestWakeTimer(timer, lastRound)
 		case <-timer.C:
-			s.ArchiveExpiredAstraGateways()
 			s.refreshOpenAICodexTickets(ctx)
 			lastRound = time.Now()
 			s.armHarvestIntervalTimer(ctx, timer, lastRound)
@@ -1318,14 +1292,9 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 			}
 			ticket := s.lookupOpenAICodexTicket(&account, model)
 			if ticket.valid(now, openAICodexTicketTargetLength(&account, cfg)) && !ticket.needsRefresh(now, refreshBefore) {
-				s.testAstraCandyAfterStore(ctx, &account, ticket, false)
-				if ticket.Standby.valid(now, 780) {
-					s.testAstraCandyAfterStore(ctx, &account, ticket.Standby, false)
-				}
 				continue
 			}
 			if ticket != nil && ticket.Standby.valid(now, openAICodexTicketTargetLength(&account, cfg)) && !ticket.Standby.needsRefresh(now, refreshBefore) {
-				s.testAstraCandyAfterStore(ctx, &account, ticket.Standby, false)
 				continue
 			}
 			acc := account

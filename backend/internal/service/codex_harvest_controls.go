@@ -30,8 +30,6 @@ type CodexHarvestBound struct {
 	Max int `json:"max"`
 }
 
-// Stored controls may still carry the retired ticket_first_scheduling flag;
-// it is ignored on read and dropped on the next save.
 type CodexHarvestControls struct {
 	EdgeIP            string            `json:"edge_ip"`
 	Transport         string            `json:"transport"`

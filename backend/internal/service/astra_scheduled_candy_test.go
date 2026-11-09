@@ -53,7 +53,7 @@ func TestScheduledAstraCandyIsObservationOnly(t *testing.T) {
 				calls++
 				require.Equal(t, "http://source.invalid:8080", proxy)
 				require.Equal(t, h.Get("Authorization"), req.Header.Get("Authorization"))
-				require.Empty(t, req.Header.Get(openAICodexTurnStateHeader))
+				require.Equal(t, ticket.State, req.Header.Get(openAICodexTurnStateHeader))
 				require.Equal(t, strings.Join(ticket.HarvestCookies, "; "), req.Header.Get("Cookie"))
 				require.True(t, IsOpenAICodexStateProbeRequest(req.Context()))
 				require.True(t, IsBoundAstraTicketRequest(req.Context()))
@@ -81,8 +81,7 @@ func TestScheduledAstraCandyIsObservationOnly(t *testing.T) {
 				}
 				return response, nil
 			}}
-			reason, _ := s.runScheduledAstraCandy(t.Context(), h, a.ID, ticket)
-			require.Equal(t, tc.reason, reason)
+			require.Equal(t, tc.reason, s.runScheduledAstraCandy(t.Context(), h, a.ID, ticket))
 			require.Equal(t, 1, calls)
 			after, _ := json.Marshal(repo.accounts[2])
 			require.Equal(t, string(before), string(after))
@@ -229,21 +228,6 @@ func TestScheduledAstraCandySwitchDefaultsOffAndCanEnableSameTicket(t *testing.T
 	require.Equal(t, int32(1), calls.Load())
 	repo.err = errors.New("settings unavailable")
 	require.False(t, s.settingService.CodexTicketCandyObservation(t.Context()))
-}
-
-func TestGatewayCandyRequestUsesAstraLow(t *testing.T) {
-	var body string
-	_, err := fireOpenAICodexPromptShotRequest(context.Background(), http.Header{}, gatewayCandyModel, "", "", "只输出最终答案数字，不要解释。", CandyPrompt, gatewayCandyReasoningEffort, func(req *http.Request) (*http.Response, error) {
-		raw, readErr := io.ReadAll(req.Body)
-		require.NoError(t, readErr)
-		body = string(raw)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(candyStream("21")))}, nil
-	})
-	require.NoError(t, err)
-	require.Contains(t, body, `"model":"gpt-6-astra"`)
-	require.Contains(t, body, `"reasoning":{"effort":"low"}`)
-	require.NotContains(t, body, `"reasoning_effort"`)
-	require.NotContains(t, body, "gpt-6.1-sol")
 }
 
 func TestScheduledAstraCandySkipsAdminAccountTests(t *testing.T) {

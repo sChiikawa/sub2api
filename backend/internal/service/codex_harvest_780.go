@@ -23,8 +23,6 @@ func codexTicketLifetime(length int) time.Duration {
 
 var codex780GatewayRE = regexp.MustCompile(`(?:^|[.])(?:chat\.)?gateway\.(unified-[0-9]{1,5})(?:[.]|$)`)
 
-var codex780GatewayHostRE = regexp.MustCompile(`^chat\.gateway\.unified-[0-9]{1,5}\.api\.openai\.com$`)
-
 var codex780TargetRE = regexp.MustCompile(`^(?:chat\.gateway\.)?(unified-[0-9]{1,5})(?:\.api\.openai\.com)?$`)
 
 var codex780GatewayAliasRE = regexp.MustCompile("^(?:unified[-_.]?)?([0-9]{1,5})$")
@@ -45,37 +43,6 @@ func normalizeCodex780Gateway(target string) string {
 
 func codex780GatewayAllowed(actual, target string) bool {
 	return actual != "" && (target == "any" || actual == target)
-}
-
-// codex780CookieGatewayHost returns the OpenAI gateway hostname declared in
-// the __oailb cookie. Anything outside that hostname shape is omitted.
-func codex780CookieGatewayHost(cookies []string) string {
-	for _, cookie := range cookies {
-		name, value, _ := strings.Cut(cookie, "=")
-		if name != "__oailb" {
-			continue
-		}
-		parts := strings.Split(value, ".")
-		if len(parts) != 3 {
-			return ""
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return ""
-		}
-		var claims struct {
-			Host string `json:"host"`
-		}
-		if json.Unmarshal(raw, &claims) != nil {
-			return ""
-		}
-		host := strings.ToLower(strings.TrimSpace(claims.Host))
-		if codex780GatewayHostRE.MatchString(host) {
-			return host
-		}
-		return ""
-	}
-	return ""
 }
 
 func codex780CookieGateway(cookies []string) string {
@@ -213,11 +180,8 @@ func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account 
 		out.Err = err
 		return
 	}
-	// Empty means the historical default. "any" keeps every valid gateway.
-	target := normalizeCodex780Gateway(controls.TargetGateway)
-	if target == "" {
-		target = "unified-88"
-	}
+	// Gateway claims describe routing, not ticket quality.
+	target := "any"
 	out.Gateway = target
 	out.Transport = "sse"
 	out.EdgeIP = controls.EdgeIP
@@ -254,9 +218,7 @@ func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account 
 	}
 	out.Sent = true
 	if controls.Transport == "websocket" {
-		out = requestCodex780WS(req, proxy, controls.EdgeIP, payload, seed, target, model)
-		s.noteObservedGatewayCookies(account, model, out.Cookies, out.Status)
-		return out
+		return requestCodex780WS(req, proxy, controls.EdgeIP, payload, seed, target, model)
 	}
 	var resp *http.Response
 	if controls.EdgeIP != "" {
@@ -270,7 +232,6 @@ func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account 
 		resp, err = s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 	}
 	if err != nil {
-		s.noteObservedGatewayCookie(account, model, resp)
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -281,7 +242,6 @@ func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account 
 		out.Err = errors.New("mint response missing")
 		return
 	}
-	s.noteObservedGatewayCookie(account, model, resp)
 	out.Status = resp.StatusCode
 	out.RetryAfter = codexHarvestRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	if resp.Body == nil {

@@ -124,17 +124,15 @@ type CodexHarvestFlowCounts struct {
 }
 
 type CodexHarvestFlowSnapshot struct {
-	Coverage     *CodexHarvestCoverage     `json:"coverage,omitempty"`
-	GeneratedAt  time.Time                 `json:"generated_at"`
-	Harvest      CodexHarvestFlowHarvest   `json:"harvest"`
-	Sidecar      CodexHarvestFlowSidecar   `json:"sidecar"`
-	Stages       []CodexHarvestFlowStage   `json:"stages"`
-	Accounts     []CodexHarvestFlowAccount `json:"accounts"`
-	Counts       CodexHarvestFlowCounts    `json:"counts"`
-	Events       []CodexHarvestFlowEvent   `json:"events"`
-	Gateways     []AstraGatewayPoolEntry   `json:"gateways"`
-	GatewayTurns []AstraGatewayTurnView    `json:"gateway_turns"`
-	Runtime      *CodexHarvestRuntime      `json:"runtime,omitempty"`
+	Coverage    *CodexHarvestCoverage     `json:"coverage,omitempty"`
+	GeneratedAt time.Time                 `json:"generated_at"`
+	Harvest     CodexHarvestFlowHarvest   `json:"harvest"`
+	Sidecar     CodexHarvestFlowSidecar   `json:"sidecar"`
+	Stages      []CodexHarvestFlowStage   `json:"stages"`
+	Accounts    []CodexHarvestFlowAccount `json:"accounts"`
+	Counts      CodexHarvestFlowCounts    `json:"counts"`
+	Events      []CodexHarvestFlowEvent   `json:"events"`
+	Runtime     *CodexHarvestRuntime      `json:"runtime,omitempty"`
 }
 
 type CodexHarvestFlowRepository interface {
@@ -292,78 +290,6 @@ func recordCodexHarvestNode(now, groupType string, allCount int) {
 	})
 }
 
-// noteObservedGatewayCookie records a gateway hostname carried by a response
-// cookie. A ticket does not have to be accepted; the cookie alone is enough.
-func (s *OpenAIGatewayService) noteObservedGatewayCookie(account *Account, model string, resp *http.Response) {
-	if resp == nil {
-		return
-	}
-	s.noteObservedGatewayCookies(account, model, responseCookiePairs(resp), resp.StatusCode)
-}
-
-func openAIRequestModel(req *http.Request) string {
-	if req == nil || req.GetBody == nil {
-		return ""
-	}
-	body, err := req.GetBody()
-	if err != nil || body == nil {
-		return ""
-	}
-	defer func() { _ = body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(body, 1<<20))
-	if err != nil {
-		return ""
-	}
-	return extractOpenAICodexTicketModel(raw)
-}
-
-func (s *OpenAIGatewayService) noteBusinessGatewayCookie(account *Account, model string, resp *http.Response) {
-	if resp == nil {
-		return
-	}
-	s.noteGatewayCookies(account, model, responseCookiePairs(resp), resp.StatusCode, false)
-}
-
-func (s *OpenAIGatewayService) noteObservedGatewayCookies(account *Account, model string, cookies []string, httpStatus int) {
-	s.noteGatewayCookies(account, model, cookies, httpStatus, true)
-}
-
-func (s *OpenAIGatewayService) noteGatewayCookies(account *Account, model string, cookies []string, httpStatus int, alwaysLog bool) {
-	host := codex780CookieGatewayHost(cookies)
-	if host == "" {
-		return
-	}
-	var accountID int64
-	var accountName string
-	if account != nil {
-		accountID = account.ID
-		accountName = account.Name
-	}
-	saved := s.rememberGatewayCookieFrom(accountID, accountName, cookies, time.Now())
-	if !alwaysLog && !saved {
-		return
-	}
-	event := CodexHarvestFlowEvent{
-		Stage:      "probe",
-		Kind:       "gateway_seen",
-		Model:      model,
-		Node:       host,
-		HTTPStatus: httpStatus,
-		Result:     "gateway_seen",
-		Detail:     host,
-	}
-	if account != nil {
-		event.AccountID = account.ID
-		event.AccountName = account.Name
-		s.recordAstraGatewayHistory(AstraGatewayHistoryRecord{
-			Gateway:         host,
-			SourceAccountID: account.ID,
-			LastReason:      "qualified",
-		}, true)
-	}
-	recordCodexHarvestFlow(event)
-}
-
 func recordCodexHarvestProbe(account *Account, model, result, node, detail string, httpStatus, length, blocks, expectedLength, expectedBlocks int, verified ...bool) {
 	kind := "probe_miss"
 	if result == "success" {
@@ -433,10 +359,6 @@ func recordCodexHarvestTicketStore(account *Account, ticket *openAICodexTicket, 
 	if ticket.Length == 780 {
 		event.ExpectedLength = 780
 		event.ExpectedBlocks = 33
-	}
-	if ticket.Acquisition == "reuse" && ticket.SourceAccountID > 0 {
-		// The lender is recorded by ID only; the admin view resolves its name.
-		event.Kind, event.Result, event.Detail = "borrow", "reuse", fmt.Sprintf("#%d", ticket.SourceAccountID)
 	}
 	recordCodexHarvestFlow(event)
 }
@@ -946,7 +868,7 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			snapshot.Counts.ProbeHit++
 		case "probe_miss":
 			snapshot.Counts.ProbeMiss++
-		case "accept", "borrow":
+		case "accept":
 			snapshot.Counts.TicketAccept++
 		case "reject":
 			snapshot.Counts.TicketReject++
@@ -1058,7 +980,7 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 		if event.Kind == "reject" && snapshot.Counts.TicketsReady == 0 {
 			ticket.Status = "fail"
 			ticket.Detail = "response rejected"
-		} else if (event.Kind == "accept" || event.Kind == "borrow") && snapshot.Counts.TicketsReady == 0 && ticket.Status != "fail" {
+		} else if event.Kind == "accept" && snapshot.Counts.TicketsReady == 0 && ticket.Status != "fail" {
 			ticket.Status = "warn"
 			ticket.Detail = "no valid ticket"
 		}

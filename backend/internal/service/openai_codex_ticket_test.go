@@ -797,25 +797,6 @@ func TestOpenAICodexTicketShouldNotYieldStickyWithoutBetterTicket(t *testing.T) 
 	require.False(t, svc.openAICodexTicketShouldYieldSticky(context.Background(), low, nil, PlatformOpenAI, "gpt-6-astra", false, nil))
 }
 
-func TestOpenAICodexTicketTicketlessStickyKeepsPriority(t *testing.T) {
-	ticketless := ticketTestAccount(20)
-	ticketless.Priority = 1
-	ticketed := ticketTestAccount(5)
-	ticketed.Priority = 100
-	attachReadyCodexTicket(ticketed, "gpt-6-astra")
-
-	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
-		Enabled:      true,
-		TargetLength: 292,
-		TTLSeconds:   3600,
-		Models:       []string{"gpt-6-astra"},
-	}, nil)
-	svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{*ticketless, *ticketed}}
-
-	require.False(t, svc.openAICodexTicketShouldYieldSticky(context.Background(), ticketless, nil, PlatformOpenAI, "gpt-6-astra", false, nil), "a lower-priority ticket holder never takes the session")
-	require.False(t, svc.openAICodexTicketShouldYieldSticky(context.Background(), ticketed, nil, PlatformOpenAI, "gpt-6-astra", false, nil))
-}
-
 func TestOpenAICodexTicketShouldNotYieldStickyWhenPriorityTied(t *testing.T) {
 	a := ticketTestAccount(5)
 	a.Priority = 1

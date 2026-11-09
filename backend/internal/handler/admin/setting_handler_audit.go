@@ -529,18 +529,6 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexTicketCandyObservation != after.OpenAICodexTicketCandyObservation {
 		changed = append(changed, "openai_codex_ticket_candy_observation")
 	}
-	if before.OpenAICodexGatewayCandyCheck != after.OpenAICodexGatewayCandyCheck {
-		changed = append(changed, "openai_codex_gateway_candy_check")
-	}
-	if before.OpenAICodexGatewayCandyPrefetch != after.OpenAICodexGatewayCandyPrefetch {
-		changed = append(changed, "openai_codex_gateway_candy_prefetch")
-	}
-	if before.OpenAICodexGatewayCandyPrefer != after.OpenAICodexGatewayCandyPrefer {
-		changed = append(changed, "openai_codex_gateway_candy_prefer")
-	}
-	if before.OpenAICodexGatewayCandyConcurrency != after.OpenAICodexGatewayCandyConcurrency {
-		changed = append(changed, "openai_codex_gateway_candy_concurrency")
-	}
 	if before.OpenAICodexTicketFailClosed != after.OpenAICodexTicketFailClosed {
 		changed = append(changed, "openai_codex_ticket_fail_closed")
 	}

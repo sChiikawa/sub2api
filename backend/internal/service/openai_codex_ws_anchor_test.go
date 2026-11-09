@@ -35,7 +35,8 @@ func anchorTestService() (*OpenAIGatewayService, *Account) {
 }
 func completeAnchorSeed(t *testing.T, s *OpenAIGatewayService, a *Account, c *gin.Context) {
 	t.Helper()
-	ctx, finish := s.prepareCodexWSAnchor(context.Background(), c, a, []byte(`{"model":"gpt-6-astra"}`))
+	ctx, finish, err := s.prepareCodexWSAnchor(context.Background(), c, a, []byte(`{"model":"gpt-6-astra"}`))
+	require.NoError(t, err)
 	require.NotNil(t, finish)
 	o := beginUpstreamResponseModelObservation(c)
 	o.ObserveOpenAI([]byte(`{"type":"response.completed","response":{"id":"resp_seed","model":"gpt-6-astra","status":"completed","output":[{"content":[{"type":"output_text","text":"323"}]}]}}`), "response.completed")
@@ -47,22 +48,21 @@ func TestCodexWSAnchorIsolationAndDeadline(t *testing.T) {
 	c := anchorTestContext(1, "session-a")
 	completeAnchorSeed(t, s, a, c)
 	body := []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_seed"}`)
-	// Unknown continuations are forwarded normally, never attached to another session.
 	for _, other := range []*gin.Context{anchorTestContext(2, "session-a"), anchorTestContext(1, "session-b")} {
-		_, finish := s.prepareCodexWSAnchor(context.Background(), other, a, body)
-		require.Nil(t, finish)
+		_, _, err := s.prepareCodexWSAnchor(context.Background(), other, a, body)
+		require.Error(t, err)
 	}
 	original := a.Credentials["access_token"]
 	a.Credentials["access_token"] = "changed"
-	_, finish := s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.Nil(t, finish)
+	_, _, err := s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.Error(t, err)
 	a.Credentials["access_token"] = original
-	ctx, finish := s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.NotNil(t, finish)
+	ctx, finish, err := s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.NoError(t, err)
 	turn := codexWSAnchorFromContext(ctx)
 	require.Equal(t, "resp_seed", turn.previousID)
-	_, busy := s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.Nil(t, busy, "a concurrent turn is forwarded without the anchor")
+	_, _, err = s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.ErrorContains(t, err, "active request")
 	var deadline time.Time
 	for _, e := range s.codexWSAnchors.entries {
 		deadline = e.expires
@@ -74,14 +74,14 @@ func TestCodexWSAnchorIsolationAndDeadline(t *testing.T) {
 		require.Equal(t, deadline, e.expires)
 		require.Equal(t, "conn_qualified", e.connID)
 	}
-	_, finish = s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.Nil(t, finish)
+	_, _, err = s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.Error(t, err)
 	for k, e := range s.codexWSAnchors.entries {
 		e.expires = time.Now().Add(-time.Second)
 		s.codexWSAnchors.entries[k] = e
 	}
-	_, finish = s.prepareCodexWSAnchor(context.Background(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_next"}`))
-	require.Nil(t, finish)
+	_, _, err = s.prepareCodexWSAnchor(context.Background(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_next"}`))
+	require.Error(t, err)
 }
 func TestCodexWSAnchorRejectsFailureAndHonorsSwitches(t *testing.T) {
 	s, a := anchorTestService()
@@ -89,17 +89,18 @@ func TestCodexWSAnchorRejectsFailureAndHonorsSwitches(t *testing.T) {
 	completeAnchorSeed(t, s, a, c)
 	body := []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_seed"}`)
 	s.cfg.Gateway.OpenAIWS.ForceHTTP = true
-	_, finish := s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.Nil(t, finish, "WSv2 off forwards normally")
+	_, _, err := s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.ErrorContains(t, err, "WSv2")
 	s.cfg.Gateway.OpenAIWS.ForceHTTP = false
-	_, finish = s.prepareCodexWSAnchor(context.Background(), c, a, body)
-	require.NotNil(t, finish)
+	_, finish, err := s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.NoError(t, err)
 	finish(nil, errors.New("upstream failure"))
 	require.Empty(t, s.codexWSAnchors.entries)
-	_, finish = s.prepareCodexWSAnchor(context.Background(), anchorTestContext(1, ""), a, []byte(`{"model":"gpt-6-astra"}`))
-	require.Nil(t, finish, "missing session identity forwards normally")
+	_, _, err = s.prepareCodexWSAnchor(context.Background(), anchorTestContext(1, ""), a, []byte(`{"model":"gpt-6-astra"}`))
+	require.Error(t, err)
 	s.cfg.Gateway.CodexWSAnchor.Enabled = false
-	_, finish = s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	_, finish, err = s.prepareCodexWSAnchor(context.Background(), c, a, body)
+	require.NoError(t, err)
 	require.Nil(t, finish)
 }
 func TestCodexWSAnchorCookiePreservesIdentity(t *testing.T) {
@@ -173,15 +174,15 @@ func TestCodexWSAnchorNativeSeedThenPinnedWS(t *testing.T) {
 func TestCodexWSAnchorPreservesProxyAcrossTurns(t *testing.T) {
 	s, a := anchorTestService()
 	c := anchorTestContext(1, "affinity")
-	ctx, finish := s.prepareCodexWSAnchor(t.Context(), c, a, []byte(`{"model":"gpt-6-astra"}`))
-	require.NotNil(t, finish)
+	ctx, finish, err := s.prepareCodexWSAnchor(t.Context(), c, a, []byte(`{"model":"gpt-6-astra"}`))
+	require.NoError(t, err)
 	turn := codexWSAnchorFromContext(ctx)
 	turn.proxyURL = "http://source.invalid:8080"
 	turn.connID = "source-connection"
 	turn.qualified = true
 	finish(&OpenAIForwardResult{ResponseID: "resp_seed", UpstreamResponseModel: "gpt-6-astra"}, nil)
-	ctx, finish = s.prepareCodexWSAnchor(t.Context(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_seed"}`))
-	require.NotNil(t, finish)
+	ctx, finish, err = s.prepareCodexWSAnchor(t.Context(), c, a, []byte(`{"model":"gpt-6-astra","previous_response_id":"resp_seed"}`))
+	require.NoError(t, err)
 	turn = codexWSAnchorFromContext(ctx)
 	require.Equal(t, "http://source.invalid:8080", turn.proxyURL)
 	require.Equal(t, "source-connection", turn.connID)

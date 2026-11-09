@@ -35,8 +35,23 @@ func (s *OpenAIGatewayService) huntCodexHarvestTicket(ctx context.Context, accou
 	if round == nil {
 		round = &codexHarvestRound{limit: controls.Speed.MaxRequestsPerRound}
 	}
-	// Harvest always collects this account's own ticket. A candy-passed ticket
-	// is lent onto other accounts' business requests, never used as a harvest seed.
+	// Try one already collected donor before spending the same round budget
+	// on node discovery. Manual collection remains the explicit self path.
+	if fresh, ok := s.freshHarvestAccount(ctx, account, model); ok {
+		attempted, reused := s.tryBorrowStoredAstraTicket(ctx, fresh, model, time.Duration(controls.Speed.AttemptTimeoutSeconds)*time.Second, func() bool {
+			return s.reserveHarvestRequest(ctx, fresh, model, round, false)
+		})
+		if attempted && (reused.Kind == "account_error" || reused.Kind == "rate_limited") {
+			round.stopped.Store(account.ID, struct{}{})
+		}
+		if attempted && (reused.Kind == "success" || reused.Terminal || reused.Kind == "account_error" || reused.Kind == "rate_limited" || reused.Kind == "persist_failed") {
+			if reused.Kind != "success" {
+				cooldown := astraTicketCooldown(controls.Speed.CooldownSeconds, reused.RetryAfter)
+				s.openaiCodexTicketProbeCooldown.Store(openAICodexTicketKey(account.ID, model), time.Now().Add(cooldown))
+			}
+			return
+		}
+	}
 	tried := map[string]bool{}
 	attempts := 0
 	var last codexHarvestProbeResult
@@ -131,11 +146,9 @@ func (s *OpenAIGatewayService) huntCodexHarvestTicket(ctx context.Context, accou
 			s.openaiCodexTicketProbeCooldown.Delete(openAICodexTicketKey(account.ID, model))
 			ticket := codexHarvestTicket(account, model, result, cfg, attempts)
 			bindCodexHarvestEgress(ticket, attempt, session)
-			err := s.storeOpenAICodexTicket(ctx, account, ticket)
-			if err != nil && s.codexHarvest != nil {
+			if err := s.storeOpenAICodexTicket(ctx, account, ticket); err != nil && s.codexHarvest != nil {
 				s.codexHarvest.degrade("ticket persisted in memory only; database write failed")
 			}
-			s.rememberStoredAstraTicket(ctx, account, ticket, err)
 			s.recordCodexProbe(ctx, account, model, result.Kind, result.Status)
 			logger.L().Info("openai_codex_ticket harvested", zap.Int64("account_id", account.ID), zap.String("model", model), zap.Int("attempts", attempts))
 			return

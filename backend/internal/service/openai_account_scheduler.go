@@ -810,11 +810,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	if !req.DisableStickyEscape && s.service.shouldLeaveStickyForPrefetchedCandy(account.ID) {
-		slog.Info("sticky_escape_triggered", "account_id", accountID, "reason", "gateway_candy_prefetch")
-		return nil, true, nil
-	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, s.candyScheduleConcurrency(account))
+	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr != nil {
 		return nil, false, acquireErr
 	}
@@ -837,7 +833,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
 				AccountID:      accountID,
-				MaxConcurrency: s.candyScheduleConcurrency(account),
+				MaxConcurrency: account.Concurrency,
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
@@ -848,18 +844,6 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		"reason", "concurrency_full",
 	)
 	return nil, true, nil
-}
-
-func (s *defaultOpenAIAccountScheduler) candyScheduleConcurrency(account *Account) int {
-	if account == nil {
-		return 0
-	}
-	if s != nil && s.service != nil {
-		if concurrency, ok := s.service.candyPassedAccountSchedule(account.ID, time.Now()); ok && concurrency > 0 {
-			return concurrency
-		}
-	}
-	return account.Concurrency
 }
 
 func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
@@ -921,7 +905,6 @@ type openAIAccountCandidateScore struct {
 	loadKnown                          bool
 	score                              float64
 	priority                           int
-	candyPreferred                     bool
 	errorRate                          float64
 	priorityErrors                     PriorityErrorEvidence
 	ttft                               float64
@@ -1153,24 +1136,13 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 				}
 			}
 		}
-		scheduledAccount := account
-		candyPreferred := false
-		if s.service != nil {
-			if concurrency, ok := s.service.candyPassedAccountSchedule(account.ID, time.Now()); ok {
-				cloned := *account
-				cloned.Concurrency = concurrency
-				scheduledAccount = &cloned
-				candyPreferred = true
-			}
-		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
-			account:        scheduledAccount,
-			loadInfo:       loadInfo,
-			loadKnown:      loadKnown,
-			errorRate:      errorRate,
-			ttft:           ttft,
-			hasTTFT:        hasTTFT,
-			candyPreferred: candyPreferred,
+			account:   account,
+			loadInfo:  loadInfo,
+			loadKnown: loadKnown,
+			errorRate: errorRate,
+			ttft:      ttft,
+			hasTTFT:   hasTTFT,
 		})
 		if rpm, ok := accountRPMStateFromContext(ctx, account); ok && account.IsOpenAIOAuth() {
 			candidate := &allCandidates[len(allCandidates)-1]
@@ -1362,29 +1334,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
-	preferCandy := s.gatewayCandyPreferSchedulingEnabled()
 	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-		// A candy pass is a hard scheduling tier only while the prefer switch
-		// is on. Account priority is only one score term, and top-K sampling
-		// can otherwise drop a priority-1 account.
-		var preferred []openAIAccountCandidateScore
-		if preferCandy {
-			preferred, pool = partitionCandyPreferred(pool)
-		}
-		finish := func(order []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-			if len(preferred) == 0 {
-				return order
-			}
-			if len(order) == 0 {
-				return preferred
-			}
-			return append(append([]openAIAccountCandidateScore{}, preferred...), order...)
-		}
 		if len(pool) == 0 || plan.topK <= 0 {
-			return finish(nil)
+			return nil
 		}
 		if plan.priorityScheduling {
-			return finish(buildPrioritySelectionOrder(pool, req))
+			return buildPrioritySelectionOrder(pool, req)
 		}
 		groupTopK := plan.topK
 		if groupTopK > len(pool) {
@@ -1431,7 +1386,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			primary = buildOpenAIWeightedSelectionOrder(ranked, req)
 		}
 		if !plan.includeOverflowFallback || groupTopK >= len(pool) {
-			return finish(primary)
+			return primary
 		}
 
 		selected := make(map[int64]struct{}, len(primary))
@@ -1447,7 +1402,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		sort.Slice(overflow, func(i, j int) bool {
 			return isOpenAIAccountCandidateBetter(overflow[i], overflow[j])
 		})
-		return finish(append(primary, overflow...))
+		return append(primary, overflow...)
 	}
 
 	// Excel/BPS is a per-account protocol. Once a request model has a BPS
@@ -1498,54 +1453,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
-		if !preferCandy {
-			return selectionOrder
-		}
-		return preferCandyPassedAccounts(selectionOrder)
+		return selectionOrder
 	}
 
-	order := buildBPSPreferredOrder(plan.candidates)
-	if !preferCandy {
-		return order
-	}
-	return preferCandyPassedAccounts(order)
-}
-
-func (s *defaultOpenAIAccountScheduler) gatewayCandyPreferSchedulingEnabled() bool {
-	return s != nil && s.service != nil && s.service.gatewayCandyPreferSchedulingEnabled()
-}
-
-func partitionCandyPreferred(pool []openAIAccountCandidateScore) (preferred, rest []openAIAccountCandidateScore) {
-	for _, item := range pool {
-		if item.candyPreferred && item.account != nil {
-			preferred = append(preferred, item)
-			continue
-		}
-		rest = append(rest, item)
-	}
-	sort.Slice(preferred, func(i, j int) bool {
-		return preferred[i].account.ID < preferred[j].account.ID
-	})
-	return preferred, rest
-}
-
-func preferCandyPassedAccounts(order []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-	if len(order) < 2 {
-		return order
-	}
-	preferred := make([]openAIAccountCandidateScore, 0, len(order))
-	rest := make([]openAIAccountCandidateScore, 0, len(order))
-	for _, item := range order {
-		if item.candyPreferred {
-			preferred = append(preferred, item)
-		} else {
-			rest = append(rest, item)
-		}
-	}
-	if len(preferred) == 0 {
-		return order
-	}
-	return append(preferred, rest...)
+	return buildBPSPreferredOrder(plan.candidates)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1613,7 +1524,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			}
 			continue
 		}
-		scheduleConcurrency := s.candyScheduleConcurrency(candidate.account)
+		scheduleConcurrency := candidate.account.Concurrency
 		if candidate.loadKnown && scheduleConcurrency > 0 &&
 			candidate.loadInfo.CurrentConcurrency >= scheduleConcurrency {
 			continue
@@ -1778,7 +1689,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		if s.shouldYieldPriorityLatencySticky(req, account) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, s.candyScheduleConcurrency(account))
+		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
