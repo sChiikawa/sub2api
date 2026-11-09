@@ -1033,7 +1033,7 @@ func lockAndMergeAccountProbeExtra(
 	// The fork already reads the complete extra object under this row lock for
 	// ticket, quality and admission ownership. Use that same snapshot for Grok
 	// managed state, preserving the other owners and the query contract.
-	for _, key := range []string{"grok_observed_models", service.UpstreamModelMetadataExtraKey} {
+	for _, key := range []string{"grok_observed_models", service.UpstreamModelMetadataExtraKey, service.UpstreamModelSyncExtraKey} {
 		delete(extra, key)
 		if value, ok := currentExtra[key]; ok && value != nil {
 			if extra == nil {
@@ -1178,8 +1178,9 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 // account still has the credential snapshot captured before protocol login.
 // Re-authentication may take several minutes; the expected-value guard keeps a
 // concurrent manual edit or token refresh from being overwritten by a stale
-// callback. Successful swaps also restore the account's active/schedulable
-// state and clear transient scheduling quarantine.
+// callback. Successful swaps also restore the account's active state and clear
+// transient scheduling quarantine. Admission and 429 scheduling policies retain
+// the existing scheduling switch.
 func (r *accountRepository) ApplyOpenAIOAuthReauth(
 	ctx context.Context,
 	taskID int64,
@@ -1226,7 +1227,7 @@ func (r *accountRepository) ApplyOpenAIOAuthReauth(
 			expires_at = COALESCE($14::timestamptz, a.expires_at),
 			status = $5,
 			error_message = '',
-			schedulable = CASE WHEN a.extra ? 'openai_two_fa_admission' THEN a.schedulable ELSE TRUE END,
+			schedulable = CASE WHEN a.extra ? 'openai_two_fa_admission' OR a.extra @> '{"openai_disable_scheduling_on_429":true}'::jsonb THEN a.schedulable ELSE TRUE END,
 			rate_limited_at = NULL,
 			rate_limit_reset_at = NULL,
 			overload_until = NULL,

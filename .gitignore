@@ -136,8 +136,11 @@ vite.config.js
 user-traffic-pending/
 docs/*
 !docs/ai-ops-codex.md
+!docs/reauth-identity-validation.md
 !docs/openai-context-limit-errors.md
+!docs/openai-agent-continuation.md
 !docs/stream-timing.md
+!docs/openai-sse-delivery.md
 !docs/user-traffic.md
 !docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
@@ -173,6 +176,7 @@ docs/*
 !docs/codex-credits.md
 !docs/account-token-guard.md
 !docs/priority-scheduling.md
+!docs/scheduler-publication-contention.md
 !docs/astra-account-scheduling.md
 !docs/legal/
 !docs/legal/*.md
@@ -228,3 +232,5 @@ issues/
 
 # Local macOS re-auth Worker runtime (ephemeral, never commit)
 tools/local-worker/
+
+!docs/key-risk-patrol.md

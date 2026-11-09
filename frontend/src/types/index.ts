@@ -2032,6 +2032,7 @@ export interface UsageLog {
     forward_first_token_ms: number | null; forward_duration_ms: number
   } | null
   content_timing?: {
+    sse_event_first_ms?: number | null; semantic_first_ms?: number | null
     reasoning_first_ms: number | null; visible_text_first_ms: number | null; response_byte_first_ms: number | null
     status: string; source: string; scope: string; reasoning_streaming_capability: string; capability_source: string
   }
@@ -2757,6 +2758,7 @@ export interface QualityPolicy {
   remove_group_ids: number[]
   remove_models?: string[]
   recovery_concurrency?: number
+  retest_rest_minutes?: number
   auto_restore: boolean
   bps?: QualityBPSPolicy
 }

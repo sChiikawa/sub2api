@@ -767,6 +767,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// 目录观察和能力 metadata 只由同步写入。表单里的旧值或注入值不能进入本次更新。
 		delete(normalizedExtra, grokObservedModelsExtraKey)
 		delete(normalizedExtra, UpstreamModelMetadataExtraKey)
+		delete(normalizedExtra, UpstreamModelSyncExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -777,6 +778,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			grokBillingExtraKey,
 			grokObservedModelsExtraKey,
 			UpstreamModelMetadataExtraKey,
+			UpstreamModelSyncExtraKey,
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
@@ -1319,6 +1321,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// Bulk may mix platforms; always drop ephemeral SSO/password keys (cookie
 	// only when platform is known Grok — empty platform still strips password/*).
 	if input.Credentials != nil {
+		_, changesMapping := input.Credentials["model_mapping"]
+		_, changesCompact := input.Credentials["compact_model_mapping"]
+		_, changesMode := input.Credentials[OpenAIModelMappingModeKey]
+		if (changesMapping || changesCompact || changesMode) && slices.ContainsFunc(cachedTargets, func(a *Account) bool { return a.hasOAuthInitialModelSelection() }) {
+			input.Credentials = maps.Clone(input.Credentials)
+			input.Credentials[OAuthInitialModelSelectionKey] = nil
+		}
 		input.Credentials = SanitizeStoredCredentials("", input.Credentials)
 	}
 
