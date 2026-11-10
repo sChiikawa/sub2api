@@ -137,6 +137,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(asPricingCtx)
 
+	busyAccounts := trackOpenAIBusyAccounts(c)
 	for {
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
@@ -153,6 +154,9 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			service.PlatformOpenAI,
 		)
 		if err != nil || selection == nil || selection.Account == nil {
+			if !failoverClientGone(c) && busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			err = rpmAdmission.selectionError(err)
 			if isOpenAIRPMError(err) {
 				rpmAdmission.retryAfter(c, err)
@@ -189,6 +193,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
+			continue
+		}
+		if slotResult == openAISlotAcquireAccountBusy {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {

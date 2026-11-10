@@ -184,6 +184,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	defer func() { stopJSONKeepalive() }()
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 
+	busyAccounts := trackOpenAIBusyAccounts(c)
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
@@ -195,6 +196,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			parsed.RequiredCapabilityForModel(channelMapping.MappedModel),
 		)
 		if err != nil {
+			if !failoverClientGone(c) && busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			err = rpmAdmission.selectionError(err)
 			if isOpenAIRPMError(err) {
 				rpmAdmission.retryAfter(c, err)
@@ -230,6 +234,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
@@ -271,6 +278,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
+			continue
+		}
+		if slotResult == openAISlotAcquireAccountBusy {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {

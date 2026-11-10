@@ -974,6 +974,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	c.Request = c.Request.WithContext(service.WithOpenAIEncryptedReasoningAffinity(pricingCtx, body))
 	c.Request = c.Request.WithContext(h.gatewayService.WithOpenAIAgentMessageRecovery(c.Request.Context(), c, body, sessionHash, forwardModel))
 
+	busyAccounts := trackOpenAIBusyAccounts(c)
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
 		// be drained after a disconnect. Re-check the client context before every
@@ -1010,6 +1011,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
 				return
 			}
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			err = rpmAdmission.selectionError(err)
 			if isOpenAIRPMError(err) {
 				rpmAdmission.retryAfter(c, err)
@@ -1045,6 +1049,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, forwardModel, reqModel, requestPlatform)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
@@ -1100,6 +1107,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
+			continue
+		}
+		if slotResult == openAISlotAcquireAccountBusy {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
@@ -1681,6 +1692,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
 
+	busyAccounts := trackOpenAIBusyAccounts(c)
 	for {
 		if failoverClientGone(c) {
 			return
@@ -1715,6 +1727,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
 				return
 			}
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			err = rpmAdmission.selectionError(err)
 			if isOpenAIRPMError(err) {
 				rpmAdmission.retryAfter(c, err)
@@ -1745,6 +1760,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 		}
 		if selection == nil || selection.Account == nil {
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
@@ -1766,6 +1784,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
+			continue
+		}
+		if slotResult == openAISlotAcquireAccountBusy {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
@@ -2520,6 +2542,9 @@ const (
 	openAISlotAcquireOK openAISlotAcquireResult = iota
 	// openAISlotAcquireFailed：错误响应已写出，调用方直接 return。
 	openAISlotAcquireFailed
+	// openAISlotAcquireAccountBusy：账号并发槽已满，且响应尚未写出。仅在
+	// trackOpenAIBusyAccounts 开启时返回；调用方排除该账号后重选。
+	openAISlotAcquireAccountBusy
 	// openAISlotAcquireProfitVetoed：槽位获取成功后利润终检否决。槽位已释放、
 	// 未写任何响应；调用方应经 recordOpenAIProfitVeto 把该账号加入本请求排除集
 	// 后重新选号，全池耗尽由下一轮选号返回标准 no available accounts。
@@ -2647,6 +2672,60 @@ func withOpenAIWSTurnBillingGroup(ctx context.Context, turnKey *service.APIKey) 
 		return ctx
 	}
 	return context.WithValue(ctx, ctxkey.Group, turnKey.Group)
+}
+
+const openAIBusyAccountsKey = "openai_busy_accounts"
+
+// openAIBusyAccountMaxSwitches 限制单个请求因账号并发已满而跳过的账号数；
+// 每跳过一个都要重新选一次号，超过后就在当前账号排队。
+const openAIBusyAccountMaxSwitches = 3
+
+// openAIBusyAccounts 记录本请求仅因并发槽已满而跳过的账号。选号耗尽时把它们
+// 放回候选，请求改为在其中一个账号上排队，而不是直接失败。
+type openAIBusyAccounts struct {
+	ids   map[int64]struct{}
+	queue bool
+}
+
+// trackOpenAIBusyAccounts 让本请求在账号并发已满时换号。调用方必须处理
+// openAISlotAcquireAccountBusy，并在选号耗尽时调用 requeue。
+func trackOpenAIBusyAccounts(c *gin.Context) *openAIBusyAccounts {
+	busy := &openAIBusyAccounts{ids: make(map[int64]struct{})}
+	c.Set(openAIBusyAccountsKey, busy)
+	return busy
+}
+
+func openAIBusyAccountsFrom(c *gin.Context) *openAIBusyAccounts {
+	value, ok := c.Get(openAIBusyAccountsKey)
+	if !ok {
+		return nil
+	}
+	busy, _ := value.(*openAIBusyAccounts)
+	return busy
+}
+
+// skip 返回 true 表示应换下一个账号，而不是在这个满槽账号上排队。
+func (b *openAIBusyAccounts) skip(accountID int64) bool {
+	if b == nil || b.queue || accountID <= 0 || len(b.ids) >= openAIBusyAccountMaxSwitches {
+		return false
+	}
+	if _, seen := b.ids[accountID]; seen {
+		return false
+	}
+	b.ids[accountID] = struct{}{}
+	return true
+}
+
+// requeue 在选号耗尽后把跳过的满槽账号放回候选，下一轮改为排队。
+func (b *openAIBusyAccounts) requeue(failedAccountIDs map[int64]struct{}) bool {
+	if b == nil || b.queue || len(b.ids) == 0 {
+		return false
+	}
+	b.queue = true
+	for id := range b.ids {
+		delete(failedAccountIDs, id)
+	}
+	return true
 }
 
 // recordOpenAIProfitVeto 记录 OpenAI 侧选号循环的一次利润门终检否决：把账号
@@ -2796,6 +2875,10 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
+	}
+	// 账号并发已满。响应还没写出时换下一个账号，而不是在这个账号上排队到超时。
+	if (streamStarted == nil || !*streamStarted) && !selection.WaitPlan.Pinned && openAIBusyAccountsFrom(c).skip(account.ID) {
+		return nil, openAISlotAcquireAccountBusy
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)

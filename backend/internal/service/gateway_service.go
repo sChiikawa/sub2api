@@ -584,6 +584,9 @@ type AccountWaitPlan struct {
 	MaxConcurrency int
 	Timeout        time.Duration
 	MaxWaiting     int
+
+	// Pinned 表示请求归属于这个账号（任务、恢复或延迟调度归属），满槽时只能排队，不能换号。
+	Pinned bool
 }
 
 type AccountSelectionResult struct {

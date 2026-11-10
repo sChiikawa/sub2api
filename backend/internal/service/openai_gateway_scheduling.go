@@ -1249,6 +1249,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		var account *Account
 		var stickyHit bool
 		var headroomFallback *Account
+		var busyFallback *Account
+		busyFallbackStickyHit := false
 		rpmEligible := 0
 		rpmExhausted := 0
 		for {
@@ -1258,6 +1260,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				return nil, selectErr
 			}
 			if account == nil {
+				// 所有账号的并发槽都满了：回到第一个满槽账号排队。
+				if busyFallback != nil {
+					account = busyFallback
+					stickyHit = busyFallbackStickyHit
+					break
+				}
 				if headroomFallback != nil {
 					account = headroomFallback
 					stickyHit = false
@@ -1290,14 +1298,16 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					}
 					return markStickySessionHit(selection, stickyHit), selectErr
 				}
-				if stickyAccountID > 0 && stickyAccountID == account.ID {
-					if effectiveExcludedIDs == nil {
-						effectiveExcludedIDs = make(map[int64]struct{})
-					}
-					effectiveExcludedIDs[account.ID] = struct{}{}
-					continue
+				// 这个账号的并发槽已满，继续选下一个，而不是在这里排队。
+				if busyFallback == nil || (busyFallback.ID == stickyAccountID && account.ID != stickyAccountID) {
+					busyFallback = account
+					busyFallbackStickyHit = stickyHit
 				}
-				break
+				if effectiveExcludedIDs == nil {
+					effectiveExcludedIDs = make(map[int64]struct{})
+				}
+				effectiveExcludedIDs[account.ID] = struct{}{}
+				continue
 			}
 			if rpmState.Current < rpmState.Limit && headroomFallback == nil {
 				headroomFallback = account

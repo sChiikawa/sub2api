@@ -261,6 +261,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 	defer releaseAccount()
 
+	// 视频查询绑定在原账号上，不能换号。
+	var busyAccounts *openAIBusyAccounts
+	if boundLookupAccountID <= 0 {
+		busyAccounts = trackOpenAIBusyAccounts(c)
+	}
 	for {
 		releaseAccount()
 		if failoverClientGone(c) {
@@ -299,6 +304,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				reqLog.Info("grok_media.account_select_aborted_client_disconnected", zap.Error(err))
 				return
 			}
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			if boundLookupAccountID > 0 && errors.Is(err, service.ErrNoAvailableAccounts) {
 				h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
 				return
@@ -329,6 +337,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if busyAccounts.requeue(failedAccountIDs) {
+				continue
+			}
 			if endpoint.IsGenerationRequest() {
 				markOpsRoutingCapacityLimited(c)
 				h.errorResponse(c, http.StatusServiceUnavailable, noAccountCode, noAccountMessage)
@@ -403,6 +414,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
+			continue
+		}
+		if slotResult == openAISlotAcquireAccountBusy {
+			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {

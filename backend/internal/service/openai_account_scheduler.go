@@ -850,6 +850,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				MaxConcurrency: account.Concurrency,
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
+				Pinned:         true,
 			},
 		}), false, nil
 	}
