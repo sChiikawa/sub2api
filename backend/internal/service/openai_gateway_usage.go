@@ -190,7 +190,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
 	cacheCreationTokens := result.Usage.CacheCreationInputTokens
-	if account.IsExcelBPSCacheCreationAsInputEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses" {
+	cacheCreationAsInput := excelBPSCacheCreationBilledAsInput(account, result)
+	if cacheCreationAsInput {
 		// Total input already includes cache creation. Retain those tokens in the
 		// ordinary input bucket without changing the original upstream usage.
 		cacheCreationTokens = 0
@@ -202,9 +203,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	imageInputTokens := max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0)
 	cacheReadTokens := result.Usage.CacheReadInputTokens
 	// The same integer is written into the BPS response usage, so the client
-	// display and this bill stay on one cache-read count.
-	if account.IsExcelBPSEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses" && cacheReadTokens == 0 {
-		simulated := excelBPSMissedCacheReadTokens(result.RequestID, result.Usage, account.IsExcelBPSCacheCreationAsInputEnabled())
+	// display and this bill stay on one cache-read count. A managed connection's
+	// parent may still carry the legacy authorization marker, so gate on the
+	// BPS endpoint rather than IsExcelBPSEnabled.
+	if result.UpstreamEndpoint == "/basispoints/api/responses" && cacheReadTokens == 0 {
+		simulated := excelBPSMissedCacheReadTokens(result.RequestID, result.Usage, cacheCreationAsInput)
 		if simulated > actualInputTokens {
 			simulated = actualInputTokens
 		}

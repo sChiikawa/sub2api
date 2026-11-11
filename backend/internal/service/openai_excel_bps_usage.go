@@ -124,3 +124,24 @@ func excelBPSSimulatedCacheReadTokens(requestID string, textTokens int) int {
 	hundredths := 9501 + int(hasher.Sum32()%99)
 	return textTokens * hundredths / 10000
 }
+
+// excelBPSCacheCreationBilledAsInput reports whether local billing moves a BPS
+// result's cache creation into ordinary input. The upstream endpoint proves the
+// request was sent through BPS. A managed authorization connection sends with a
+// projected account that keeps this option and drops the legacy BPS
+// authorization marker; the scheduled parent recorded here may still carry that
+// marker, which hides every legacy BPS option. Read the option directly for such
+// a parent so billing matches the usage the forwarder already returned.
+func excelBPSCacheCreationBilledAsInput(account *Account, result *OpenAIForwardResult) bool {
+	if account == nil || result == nil || result.UpstreamEndpoint != "/basispoints/api/responses" {
+		return false
+	}
+	if account.IsExcelBPSCacheCreationAsInputEnabled() {
+		return true
+	}
+	if !account.HasManagedOpenAIConnections() {
+		return false
+	}
+	enabled, _ := account.Extra["openai_excel_bps_cache_creation_as_input"].(bool)
+	return enabled
+}

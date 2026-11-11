@@ -159,14 +159,19 @@ func excelBPSShouldSwitchInBandFailure(c *gin.Context, ctx context.Context, resu
 // coolDownExcelBPS skips the account for BPS requests until the upstream
 // Retry-After, or the configured 429 fallback when none is given. A shorter
 // cooldown never replaces a longer one.
-func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Account, retryAfter string) {
+func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Account, retryAfter string, responseHeaders ...http.Header) {
 	if s == nil || account == nil {
 		return
 	}
-	ctx, _ = s.rateLimitService.maybeDisableOpenAISchedulingOn429(ctx, account, http.StatusTooManyRequests)
+	headers := http.Header{}
+	if len(responseHeaders) > 0 && responseHeaders[0] != nil {
+		headers = responseHeaders[0].Clone()
+	}
+	headers.Set("Retry-After", retryAfter)
+	ctx, _ = s.rateLimitService.maybeDisableOpenAISchedulingOn429(ctx, account, http.StatusTooManyRequests, headers)
 	ctx = s.rateLimitService.maybeRotateOpenAITOTPOn429(ctx, account, http.StatusTooManyRequests)
 	if account.AuthConnectionID != "" {
-		s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, http.Header{"Retry-After": []string{retryAfter}}, nil)
+		s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, nil)
 		return
 	}
 	cooldown, ok := excelBPSRetryAfter(retryAfter, time.Now())
