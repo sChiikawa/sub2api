@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // ExcelBPSRateLimitedReason marks a BPS 429 that another account may still
@@ -36,7 +37,8 @@ const excelBPSRateLimitedFilterReason = "excel_bps_rate_limited"
 // BPS throttles its own endpoint independently of the account's Codex quota.
 // A BPS 429 is therefore handed back to the handler's account-switch loop
 // before any response byte is written, and cools only this account's BPS
-// route. Natively forwarded models, persisted quota fields and the shared
+// route for the throttled model, or for every model when the quota is
+// exhausted. Natively forwarded models, persisted quota fields and the shared
 // scheduler health score are left alone. Like other runtime blocks, the
 // cooldown is local to this process.
 func newExcelBPSRateLimitedFailoverError(retryAfter string) *UpstreamFailoverError {
@@ -156,10 +158,37 @@ func excelBPSShouldSwitchInBandFailure(c *gin.Context, ctx context.Context, resu
 	return !excelBPSResponseStarted(c)
 }
 
+// excelBPS429CooldownModel returns the upstream model a BPS 429 cools. BPS
+// throttles each model separately, but exhausted quota is shared by every
+// model on the account, so it returns "" to cool the whole BPS route.
+func excelBPS429CooldownModel(upstreamModel string, headers http.Header, body []byte) string {
+	for _, path := range [...]string{"error.code", "error.type", "response.error.code", "response.error.type", "code"} {
+		switch gjson.GetBytes(body, path).String() {
+		case "insufficient_quota", "usage_limit_reached":
+			return ""
+		}
+	}
+	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
+		for _, used := range []*float64{snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent} {
+			if used != nil && *used >= 100 {
+				return ""
+			}
+		}
+	}
+	return strings.TrimSpace(upstreamModel)
+}
+
 // coolDownExcelBPS skips the account for BPS requests until the upstream
 // Retry-After, or the configured 429 fallback when none is given. A shorter
 // cooldown never replaces a longer one.
 func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Account, retryAfter string, responseHeaders ...http.Header) {
+	s.coolDownExcelBPSScoped(ctx, account, "", retryAfter, responseHeaders...)
+}
+
+// coolDownExcelBPSScoped is coolDownExcelBPS limited to one upstream model;
+// an empty model cools every BPS model on the account. Managed connections
+// keep their account-level handling.
+func (s *OpenAIGatewayService) coolDownExcelBPSScoped(ctx context.Context, account *Account, upstreamModel, retryAfter string, responseHeaders ...http.Header) {
 	if s == nil || account == nil {
 		return
 	}
@@ -188,6 +217,12 @@ func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Ac
 		cooldown = limit
 	}
 	until := time.Now().Add(cooldown)
+	if upstreamModel = strings.TrimSpace(upstreamModel); upstreamModel != "" {
+		if s.excelBPSModelRateLimit.extend(excelBPSModelKey{account.ID, upstreamModel}, until) {
+			logger.LegacyPrintf("service.openai_excel_bps", "rate limited; skipping model for BPS requests: account_id=%d model=%s cooldown=%s", account.ID, upstreamModel, cooldown)
+		}
+		return
+	}
 	for {
 		current, loaded := s.excelBPSCooldownUntil.LoadOrStore(account.ID, until)
 		if !loaded {
@@ -233,13 +268,14 @@ func (s *OpenAIGatewayService) isExcelBPSCoolingDown(account *Account, requested
 	if s == nil || account == nil {
 		return false
 	}
-	value, ok := s.excelBPSCooldownUntil.Load(account.ID)
-	if !ok {
+	if value, ok := s.excelBPSCooldownUntil.Load(account.ID); ok {
+		if until, valid := value.(time.Time); valid && time.Now().Before(until) {
+			return account.IsExcelBPSEnabledForModel(requestedModel)
+		}
+		s.excelBPSCooldownUntil.CompareAndDelete(account.ID, value)
+	}
+	if !account.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
 	}
-	if until, valid := value.(time.Time); valid && time.Now().Before(until) {
-		return account.IsExcelBPSEnabledForModel(requestedModel)
-	}
-	s.excelBPSCooldownUntil.CompareAndDelete(account.ID, value)
-	return false
+	return s.excelBPSModelRateLimit.active(excelBPSModelKey{account.ID, account.GetMappedModel(requestedModel)})
 }

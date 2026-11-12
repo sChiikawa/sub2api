@@ -545,6 +545,7 @@ type OpenAIGatewayService struct {
 	excelBPSIPPoolMu       sync.Mutex
 	excelBPSIPPoolSyncedAt time.Time
 	excelBPSModelCooldowns excelBPSModelCooldowns
+	excelBPSModelRateLimit excelBPSModelCooldowns
 	excelBPSCooldownUntil  sync.Map // key: int64(accountID), value: time.Time
 	harvestIPPoolMu        sync.Mutex
 	harvestIPPoolExits     []harvestIPPoolExit

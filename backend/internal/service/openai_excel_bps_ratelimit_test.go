@@ -192,6 +192,15 @@ func excelBPSCooldownRemaining(t *testing.T, svc *OpenAIGatewayService, accountI
 	return time.Until(until)
 }
 
+func excelBPSModelCooldownRemaining(t *testing.T, svc *OpenAIGatewayService, accountID int64, model string) time.Duration {
+	t.Helper()
+	svc.excelBPSModelRateLimit.mu.Lock()
+	defer svc.excelBPSModelRateLimit.mu.Unlock()
+	until, ok := svc.excelBPSModelRateLimit.until[excelBPSModelKey{accountID, model}]
+	require.True(t, ok, "expected a BPS model cooldown")
+	return time.Until(until)
+}
+
 func TestExcelBPS429FailsOverWithoutChangingCodexState(t *testing.T) {
 	retryAt := time.Now().Add(time.Minute).UTC().Format(http.TimeFormat)
 	for _, tc := range []struct {
@@ -201,18 +210,20 @@ func TestExcelBPS429FailsOverWithoutChangingCodexState(t *testing.T) {
 		cancelOnRead   bool
 		wantRetryAfter string
 		wantCooldown   time.Duration
+		quotaExhausted bool
 	}{
-		{name: "quota headers", headers: excelBPSQuotaHeaders("100", "100"), wantCooldown: 11 * time.Second},
+		{name: "quota headers", headers: excelBPSQuotaHeaders("100", "100"), wantCooldown: 11 * time.Second, quotaExhausted: true},
 		{name: "unexhausted headers", headers: excelBPSQuotaHeaders("30", "20"), wantCooldown: 11 * time.Second},
-		{name: "body reset timestamp", raw: fmt.Sprintf(`{"error":{"type":"usage_limit_reached","resets_at":%d}}`, time.Now().Add(2*time.Hour).Unix()), wantCooldown: 11 * time.Second},
-		{name: "body reset duration", raw: `{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}`, wantCooldown: 11 * time.Second},
+		{name: "body reset timestamp", raw: fmt.Sprintf(`{"error":{"type":"usage_limit_reached","resets_at":%d}}`, time.Now().Add(2*time.Hour).Unix()), wantCooldown: 11 * time.Second, quotaExhausted: true},
+		{name: "body reset duration", raw: `{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}`, wantCooldown: 11 * time.Second, quotaExhausted: true},
+		{name: "insufficient quota", raw: `{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}`, wantCooldown: 11 * time.Second, quotaExhausted: true},
 		{name: "generic rate limit", wantCooldown: 11 * time.Second},
 		{name: "malformed body", raw: "not json", wantCooldown: 11 * time.Second},
 		{name: "retry after seconds", headers: http.Header{"Retry-After": {"30"}}, wantRetryAfter: "30", wantCooldown: 30 * time.Second},
 		{name: "retry after date", headers: http.Header{"Retry-After": {retryAt}}, wantRetryAfter: retryAt, wantCooldown: time.Minute},
 		{name: "retry after beyond cap", headers: http.Header{"Retry-After": {"86400"}}, wantRetryAfter: "86400", wantCooldown: 2 * time.Hour},
 		{name: "invalid retry after", headers: http.Header{"Retry-After": {"soon"}}, wantCooldown: 11 * time.Second},
-		{name: "client cancellation", headers: excelBPSQuotaHeaders("100", "100"), cancelOnRead: true, wantCooldown: 11 * time.Second},
+		{name: "client cancellation", headers: excelBPSQuotaHeaders("100", "100"), cancelOnRead: true, wantCooldown: 11 * time.Second, quotaExhausted: true},
 	} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, stream), func(t *testing.T) {
@@ -271,8 +282,15 @@ func TestExcelBPS429FailsOverWithoutChangingCodexState(t *testing.T) {
 				require.Equal(t, http.StatusTooManyRequests, events[0].UpstreamStatusCode)
 				require.NotContains(t, events[0].Message+events[0].Detail, "PRIVATE_UPSTREAM")
 
-				// The observed 429 cools only the BPS route, even when the client left.
-				require.InDelta(t, tc.wantCooldown.Seconds(), excelBPSCooldownRemaining(t, svc, account.ID).Seconds(), 2)
+				// The observed 429 cools only the BPS route, even when the client left:
+				// exhausted quota for every BPS model, a throttle only for this model.
+				if tc.quotaExhausted {
+					require.InDelta(t, tc.wantCooldown.Seconds(), excelBPSCooldownRemaining(t, svc, account.ID).Seconds(), 2)
+				} else {
+					require.InDelta(t, tc.wantCooldown.Seconds(), excelBPSModelCooldownRemaining(t, svc, account.ID, "gpt-6-astra").Seconds(), 2)
+					_, accountWide := svc.excelBPSCooldownUntil.Load(account.ID)
+					require.False(t, accountWide, "a model throttle leaves the account's other BPS models schedulable")
+				}
 				require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false))
 				requireNoExcelBPSQuotaWrite(t, repo)
 				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
@@ -346,11 +364,10 @@ func TestExcelBPS429FallbackCooldownFollowsSetting(t *testing.T) {
 
 			requireExcelBPSRateLimitFailover(t, err, c)
 			if tc.wantCooldown == 0 {
-				_, cooling := svc.excelBPSCooldownUntil.Load(account.ID)
-				require.False(t, cooling, "a disabled fallback only relies on this request's exclusion")
+				require.False(t, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"), "a disabled fallback only relies on this request's exclusion")
 				return
 			}
-			require.InDelta(t, tc.wantCooldown.Seconds(), excelBPSCooldownRemaining(t, svc, account.ID).Seconds(), 1)
+			require.InDelta(t, tc.wantCooldown.Seconds(), excelBPSModelCooldownRemaining(t, svc, account.ID, "gpt-6-astra").Seconds(), 1)
 		})
 	}
 }
@@ -396,6 +413,47 @@ func TestExcelBPSCooldownOnlyAffectsBPSRoutedModels(t *testing.T) {
 
 	account.Extra["openai_excel_bps"] = false
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false), "once BPS is off the model is native")
+}
+
+func TestExcelBPS429CooldownModelScope(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		headers http.Header
+		raw     string
+		want    string
+	}{
+		{name: "throttle", raw: `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`, want: "gpt-6-astra"},
+		{name: "unexhausted headers", headers: excelBPSQuotaHeaders("30", "20"), want: "gpt-6-astra"},
+		{name: "malformed body", raw: "not json", want: "gpt-6-astra"},
+		{name: "insufficient quota", raw: `{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}`},
+		{name: "usage limit type", raw: `{"error":{"type":"usage_limit_reached"}}`},
+		{name: "in-band usage limit", raw: `{"type":"response.failed","response":{"error":{"code":"usage_limit_reached"}}}`},
+		{name: "in-band error event", raw: `{"type":"error","code":"insufficient_quota"}`},
+		{name: "exhausted 5h window", headers: excelBPSQuotaHeaders("100", "20")},
+		{name: "exhausted 7d window", headers: excelBPSQuotaHeaders("20", "100")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, excelBPS429CooldownModel("gpt-6-astra", tc.headers, []byte(tc.raw)))
+		})
+	}
+}
+
+func TestExcelBPSModelCooldownLeavesOtherBPSModels(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := excelAccount()
+	account.Extra["openai_excel_bps_models"] = []any{"gpt-6-astra", "gpt-5.6-sol"}
+	svc.coolDownExcelBPSScoped(context.Background(), account, "gpt-6-astra", "60")
+	svc.coolDownExcelBPSScoped(context.Background(), account, "gpt-6-astra", "5")
+	require.InDelta(t, 60, excelBPSModelCooldownRemaining(t, svc, account.ID, "gpt-6-astra").Seconds(), 1, "a shorter cooldown must not win")
+
+	require.True(t, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
+	require.False(t, svc.isExcelBPSCoolingDown(account, "gpt-5.6-sol"), "other BPS models stay schedulable")
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "no account-wide block")
+	_, accountWide := svc.excelBPSCooldownUntil.Load(account.ID)
+	require.False(t, accountWide)
+
+	svc.coolDownExcelBPS(context.Background(), account, "30")
+	require.True(t, svc.isExcelBPSCoolingDown(account, "gpt-5.6-sol"), "exhausted quota cools every BPS model")
 }
 
 func TestExcelBPS429AfterOutputCoolsWithoutReplay(t *testing.T) {

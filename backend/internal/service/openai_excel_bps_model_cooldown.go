@@ -36,46 +36,57 @@ func (s *OpenAIGatewayService) coolDownExcelBPSModel(account *Account, upstreamM
 		_ = s.excelOAuthReauth.FailAuthConnection(ctx, account, 403)
 		return
 	}
-	cache := &s.excelBPSModelCooldowns
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	now := time.Now()
-	if cache.until == nil {
-		cache.until = make(map[excelBPSModelKey]time.Time)
-	}
-	for key, expiry := range cache.until {
-		if !now.Before(expiry) {
-			delete(cache.until, key)
-		}
-	}
-	key := excelBPSModelKey{account.ID, upstreamModel}
-	if _, exists := cache.until[key]; !exists && len(cache.until) >= excelBPSModelPermissionMaxEntries {
-		var oldest excelBPSModelKey
-		var expiry time.Time
-		for candidate, until := range cache.until {
-			if expiry.IsZero() || until.Before(expiry) {
-				oldest, expiry = candidate, until
-			}
-		}
-		delete(cache.until, oldest)
-	}
-	cache.until[key] = now.Add(excelBPSModelPermissionCooldown)
+	s.excelBPSModelCooldowns.extend(excelBPSModelKey{account.ID, upstreamModel}, time.Now().Add(excelBPSModelPermissionCooldown))
 }
 
 func (s *OpenAIGatewayService) isExcelBPSModelCoolingDown(account *Account, requestedModel string) bool {
 	if s == nil || account == nil || !account.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
 	}
-	key := excelBPSModelKey{account.ID, account.GetMappedModel(requestedModel)}
-	cache := &s.excelBPSModelCooldowns
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	until, exists := cache.until[key]
+	return s.excelBPSModelCooldowns.active(excelBPSModelKey{account.ID, account.GetMappedModel(requestedModel)})
+}
+
+// extend reports whether until replaced the key's expiry; a shorter cooldown
+// never replaces a longer one. A full table evicts the soonest expiry.
+func (c *excelBPSModelCooldowns) extend(key excelBPSModelKey, until time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if c.until == nil {
+		c.until = make(map[excelBPSModelKey]time.Time)
+	}
+	for candidate, expiry := range c.until {
+		if !now.Before(expiry) {
+			delete(c.until, candidate)
+		}
+	}
+	current, exists := c.until[key]
+	if exists && !until.After(current) {
+		return false
+	}
+	if !exists && len(c.until) >= excelBPSModelPermissionMaxEntries {
+		var oldest excelBPSModelKey
+		var expiry time.Time
+		for candidate, candidateUntil := range c.until {
+			if expiry.IsZero() || candidateUntil.Before(expiry) {
+				oldest, expiry = candidate, candidateUntil
+			}
+		}
+		delete(c.until, oldest)
+	}
+	c.until[key] = until
+	return true
+}
+
+func (c *excelBPSModelCooldowns) active(key excelBPSModelKey) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	until, exists := c.until[key]
 	if exists && time.Now().Before(until) {
 		return true
 	}
 	if exists {
-		delete(cache.until, key)
+		delete(c.until, key)
 	}
 	return false
 }
