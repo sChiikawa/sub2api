@@ -55,6 +55,24 @@ func (c PerformanceConfig) Validate() error {
 	return nil
 }
 
+// Patch keeps only the selected top-level entries. A bounds entry is replaced
+// as a whole, so its min/max pair is never mixed with the stored one.
+func (c PerformanceConfig) Patch(fields []string) (map[string]any, error) {
+	all := map[string]any{"enabled": c.Enabled, "tps": c.TPS, "degradation": c.Degradation, "ttft": c.TTFT, "upstream_error": c.UpstreamError}
+	patch := make(map[string]any, len(fields))
+	for _, field := range fields {
+		value, ok := all[field]
+		if !ok {
+			return nil, fmt.Errorf("unknown performance field %q", field)
+		}
+		patch[field] = value
+	}
+	if len(patch) == 0 {
+		return nil, fmt.Errorf("no performance fields selected")
+	}
+	return patch, nil
+}
+
 type AccountPerformance struct {
 	UpstreamError      upstreamstats.Evidence `json:"upstream_error"`
 	AccountID          int64                  `json:"account_id"`
@@ -109,6 +127,7 @@ type AccountPerformanceRepository interface {
 	Events(context.Context, int64) ([]PerformanceEvent, error)
 	Read(context.Context, []int64, time.Time) (map[int64]AccountPerformance, error)
 	Save(context.Context, int64, PerformanceConfig, int64, int64) error
+	SaveFields(context.Context, int64, PerformanceConfig, []string, int64) error
 	Release(context.Context, int64, int64, int64, int64) error
 	Evaluate(context.Context, int64, time.Time) error
 	EnabledIDs(context.Context) ([]int64, error)

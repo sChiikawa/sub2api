@@ -15,6 +15,13 @@ export interface PerformanceConfig {
  ttft: PerformanceBounds
  upstream_error: PerformanceBounds
 }
+export type PerformanceConfigField = keyof PerformanceConfig
+export interface PerformanceBulkResult {
+ total: number
+ success: number
+ failed: number
+ errors: { account_id: number; error: string }[]
+}
 export interface UpstreamHTTPErrorEvidence {
  percent: number | null
  failures: number

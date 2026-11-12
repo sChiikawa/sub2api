@@ -6,9 +6,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 	"strconv"
+	"sync"
 	"time"
 )
+
+const maxPerformanceBulkAccounts = 1000
 
 func (h *AccountHandler) performanceAvailable(c *gin.Context) bool {
 	if h.performance == nil {
@@ -91,6 +95,70 @@ func (h *AccountHandler) SaveAccountPerformance(c *gin.Context) {
 		return
 	}
 	performanceWriteResult(c, h.performance.Repo.Save(c.Request.Context(), id, req.Config, *req.Revision, performanceActor(c)))
+}
+
+// Each account commits independently; a deleted account fails alone.
+func (h *AccountHandler) BulkSaveAccountPerformance(c *gin.Context) {
+	if !h.performanceAvailable(c) {
+		return
+	}
+	var req struct {
+		IDs    []int64                   `json:"account_ids"`
+		Fields []string                  `json:"fields"`
+		Config service.PerformanceConfig `json:"config"`
+	}
+	if c.ShouldBindJSON(&req) != nil || len(req.IDs) == 0 || len(req.IDs) > maxPerformanceBulkAccounts {
+		response.BadRequest(c, "Expected 1-1000 account ids")
+		return
+	}
+	if err := req.Config.Validate(); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if _, err := req.Config.Patch(req.Fields); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	ids := make([]int64, 0, len(req.IDs))
+	seen := make(map[int64]struct{}, len(req.IDs))
+	for _, id := range req.IDs {
+		if id <= 0 {
+			response.BadRequest(c, "Invalid account id")
+			return
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	ctx, actor := c.Request.Context(), performanceActor(c)
+	var mu sync.Mutex
+	failures := make([]gin.H, 0)
+	var g errgroup.Group
+	g.SetLimit(10)
+	for _, id := range ids {
+		g.Go(func() error {
+			err := h.performance.Repo.SaveFields(ctx, id, req.Config, req.Fields, actor)
+			if err == nil {
+				return nil
+			}
+			message := "Performance monitor update failed"
+			if errors.Is(err, service.ErrPerformanceConflict) {
+				message = "Account not found"
+			}
+			mu.Lock()
+			failures = append(failures, gin.H{"account_id": id, "error": message})
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = g.Wait()
+	response.Success(c, gin.H{
+		"total":   len(ids),
+		"success": len(ids) - len(failures),
+		"failed":  len(failures),
+		"errors":  failures,
+	})
 }
 func (h *AccountHandler) ReleaseAccountPerformance(c *gin.Context) {
 	id, ok := h.performanceAccount(c)

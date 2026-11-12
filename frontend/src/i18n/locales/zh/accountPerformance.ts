@@ -22,6 +22,16 @@ export default {
  audit: '最近监控事件', noEvents: '暂无监控事件', loading: '加载中…',
  ms: '毫秒', configureEvent: '配置阈值', pauseEvent: '自动暂停', releaseEvent: '解除暂停并关闭监控',
  refresh: '重新加载', reason: '触发指标：{reason}', auditUnavailable: '审计记录暂不可用',
+ bulk: {
+  action: '配置性能阈值',
+  title: '批量配置账号性能阈值',
+  selected: '将修改已选的 {count} 个账号。',
+  hint: '只修改勾选的项，未勾选的项保留各账号原有设置。勾选某个指标但上下限都留空，表示清除该指标的阈值。阈值要在开启监控后才会生效；已经自动暂停的账号不会因为修改阈值而解除暂停。',
+  modify: '修改',
+  noFields: '请至少勾选一项要修改的设置。',
+  success: '已为 {count} 个账号保存性能阈值',
+  failed: '批量保存失败，请重试。'
+ },
  settings: {
   title: '账号性能监控周期',
   description: '全局配置 TPS、首字耗时、探针轮次降智率及本进程上游 HTTP 错误率的滚动统计周期。',

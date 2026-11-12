@@ -221,6 +221,7 @@
           :selecting-all="selectingAllResults"
           :all-results-selected="allResultsSelected"
           :can-export2fa="authStore.isAdmin"
+          :can-configure-performance="authStore.isAdmin"
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
@@ -228,6 +229,7 @@
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
           @export-2fa="export2faIds = [...selIds]"
+          @configure-performance="bulkPerformanceIds = [...selIds]"
           @clear="clearSelection"
           @select-page="selectPage"
           @select-all-results="handleSelectAllResults"
@@ -548,6 +550,7 @@
     <TLSFingerprintProfilesModal v-if="authStore.isAdmin" :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
     <TotpStepUpDialog :controller="accountExportStepUp" />
     <AccountPerformanceDialog v-if="performanceAccount" :key="performanceAccount.id" :account-id="performanceAccount.id" :account-name="performanceAccount.name" :notice-user-id="authStore.isAdmin ? authStore.user?.id : null" :upstream-error-threshold="performanceErrorThreshold" @close="performanceAccount = null" @updated="refreshPerformance" />
+    <AccountPerformanceBulkDialog v-if="authStore.isAdmin && bulkPerformanceIds.length" :account-ids="bulkPerformanceIds" :window-minutes="performanceMinutes" @close="bulkPerformanceIds = []" @saved="handleBulkPerformanceSaved" />
     <BulkExport2FADialog v-if="authStore.isAdmin && export2faIds.length" :account-ids="export2faIds" @close="export2faIds = []" />
   </AppLayout>
 </template>
@@ -594,7 +597,8 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import SchedulableTimerControl from '@/components/account/SchedulableTimerControl.vue'
 import AccountPerformanceCell from '@/components/account/AccountPerformanceCell.vue'
 import AccountPerformanceDialog from '@/components/account/AccountPerformanceDialog.vue'
-import { performanceWindowMinutes, type AccountPerformance } from '@/types/accountPerformance'
+import AccountPerformanceBulkDialog from '@/components/account/AccountPerformanceBulkDialog.vue'
+import { performanceWindowMinutes, type AccountPerformance, type PerformanceBulkResult } from '@/types/accountPerformance'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import ExcelBPS403Badge from '@/components/account/ExcelBPS403Badge.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
@@ -691,6 +695,7 @@ const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
 const export2faIds = ref<number[]>([])
+const bulkPerformanceIds = ref<number[]>([])
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
@@ -1616,6 +1621,7 @@ const isAnyModalOpen = computed(() => {
     showImportData.value ||
     showExportDataDialog.value ||
     export2faIds.value.length > 0 ||
+    bulkPerformanceIds.value.length > 0 ||
     showBulkEdit.value ||
     showTempUnsched.value ||
     showDeleteDialog.value ||
@@ -2220,6 +2226,17 @@ const handleBulkResetStatus = async () => {
     console.error('Failed to bulk reset status:', error)
     appStore.showError(String(error))
   }
+}
+const handleBulkPerformanceSaved = (result: PerformanceBulkResult) => {
+  bulkPerformanceIds.value = []
+  if (result.failed > 0) {
+    appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+    setSelectedIds(result.errors.map(error => error.account_id))
+  } else {
+    appStore.showSuccess(t('accountPerformance.bulk.success', { count: result.success }))
+    clearSelection()
+  }
+  void refreshPerformance()
 }
 const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return

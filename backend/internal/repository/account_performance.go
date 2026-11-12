@@ -235,6 +235,57 @@ func (r *accountPerformanceRepository) Save(ctx context.Context, id int64, c ser
 	}
 	return tx.Commit()
 }
+
+// Bulk edits deliberately overwrite the selected entries, so they skip the
+// editor's revision check; the revision still advances to reject stale dialogs.
+func (r *accountPerformanceRepository) SaveFields(ctx context.Context, id int64, c service.PerformanceConfig, fields []string, actor int64) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	patch, err := c.Patch(fields)
+	if err != nil {
+		return err
+	}
+	rawPatch, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockPerformanceAccount(ctx, tx, id); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO account_performance_monitors(account_id) VALUES($1) ON CONFLICT DO NOTHING`, id)
+	if err != nil {
+		return err
+	}
+	var merged []byte
+	var revision, gen int64
+	err = tx.QueryRowContext(ctx, `UPDATE account_performance_monitors SET config=config||$2::jsonb,revision=revision+1,updated_at=NOW() WHERE account_id=$1 RETURNING config,revision,pause_generation`, id, string(rawPatch)).Scan(&merged, &revision, &gen)
+	if err != nil {
+		return err
+	}
+	var next service.PerformanceConfig
+	if err = json.Unmarshal(merged, &next); err != nil {
+		return err
+	}
+	if err = next.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	if err = performanceAudit(ctx, tx, id, "configure", actor, revision, gen, raw); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 func performanceAudit(ctx context.Context, tx *sql.Tx, id int64, action string, actor, revision, gen int64, evidence []byte) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO account_performance_events(account_id,action,actor_id,revision,pause_generation,evidence) VALUES($1,$2,NULLIF($3::bigint,0),$4,$5,$6)`, id, action, actor, revision, gen, string(evidence))
 	return err

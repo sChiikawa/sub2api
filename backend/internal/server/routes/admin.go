@@ -498,6 +498,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.POST("/performance", h.Admin.Account.AccountPerformanceBatch)
+		accounts.POST("/performance/bulk", h.Admin.Account.BulkSaveAccountPerformance)
 		accounts.PUT("/:id/performance", h.Admin.Account.SaveAccountPerformance)
 		accounts.POST("/:id/performance/release", h.Admin.Account.ReleaseAccountPerformance)
 		accounts.GET("/:id/performance/events", h.Admin.Account.AccountPerformanceEvents)

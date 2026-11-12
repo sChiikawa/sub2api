@@ -51,6 +51,7 @@
         <button @click="$emit('toggle-schedulable', true)" class="btn btn-success btn-sm">{{ t('admin.accounts.bulkActions.enableScheduling') }}</button>
         <button @click="$emit('toggle-schedulable', false)" class="btn btn-warning btn-sm">{{ t('admin.accounts.bulkActions.disableScheduling') }}</button>
         <button @click="$emit('edit-selected')" class="btn btn-primary btn-sm">{{ t('admin.accounts.bulkActions.edit') }}</button>
+        <button v-if="canConfigurePerformance" @click="$emit('configure-performance')" class="btn btn-secondary btn-sm">{{ t('accountPerformance.bulk.action') }}</button>
         <button v-if="canExport2fa" @click="$emit('export-2fa')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkExport2fa.title') }}</button>
       </template>
       <button v-if="selectedIds.length === 0" @click="$emit('edit-filtered')" class="btn btn-primary btn-sm">
@@ -69,6 +70,7 @@ defineProps<{
   selectingAll: boolean
   allResultsSelected: boolean
   canExport2fa?: boolean
+  canConfigurePerformance?: boolean
 }>()
 
 defineEmits([
@@ -82,7 +84,8 @@ defineEmits([
   'reset-status',
   'refresh-token',
   'probe-upstream-billing',
-  'export-2fa'
+  'export-2fa',
+  'configure-performance'
 ])
 
 const { t } = useI18n()

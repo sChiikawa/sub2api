@@ -1,4 +1,4 @@
-import type { AccountPerformance, PerformanceConfig, PerformanceEvent } from '@/types/accountPerformance'
+import type { AccountPerformance, PerformanceBulkResult, PerformanceConfig, PerformanceConfigField, PerformanceEvent } from '@/types/accountPerformance'
 /**
  * Admin Accounts API endpoints
  * Handles AI platform account management for administrators
@@ -1482,7 +1482,7 @@ export async function getOpenAIRequestTimezones(): Promise<{ default: string; ti
 
 export const accountsAPI = {
   getConcurrencySummary,
- getPerformance, savePerformance, releasePerformance, getPerformanceEvents,
+ getPerformance, savePerformance, bulkSavePerformance, releasePerformance, getPerformanceEvents,
   getOpenAIRequestTimezones,
   list,
   listWithEtag,
@@ -1577,6 +1577,10 @@ export async function getPerformance(accountIds: number[], signal?: AbortSignal)
 }
 export async function savePerformance(id:number,config:PerformanceConfig,revision:number): Promise<void> {
  await apiClient.put('/admin/accounts/'+id+'/performance',{config,revision})
+}
+export async function bulkSavePerformance(accountIds:number[],config:PerformanceConfig,fields:PerformanceConfigField[]): Promise<PerformanceBulkResult> {
+ const {data}=await apiClient.post<PerformanceBulkResult>('/admin/accounts/performance/bulk',{account_ids:accountIds,fields,config})
+ return data
 }
 export async function releasePerformance(id:number,revision:number,pauseGeneration:number): Promise<void> {
  await apiClient.post('/admin/accounts/'+id+'/performance/release',{revision,pause_generation:pauseGeneration})

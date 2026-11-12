@@ -22,6 +22,16 @@ export default {
  audit: 'Recent monitor events', noEvents: 'No monitor events', loading: 'Loading…',
  ms: 'ms', configureEvent: 'Thresholds configured', pauseEvent: 'Automatic pause', releaseEvent: 'Pause released; monitor disabled',
  refresh: 'Reload', reason: 'Triggered metrics: {reason}', auditUnavailable: 'Audit unavailable',
+ bulk: {
+  action: 'Configure thresholds',
+  title: 'Bulk configure performance thresholds',
+  selected: 'Applies to {count} selected accounts.',
+  hint: 'Only checked items change; unchecked items keep each account’s current settings. A checked metric with both bounds empty clears that metric. Thresholds apply only while monitoring is enabled; changing thresholds does not release an existing automatic pause.',
+  modify: 'Change',
+  noFields: 'Select at least one item to change.',
+  success: 'Saved thresholds for {count} accounts',
+  failed: 'Bulk save failed. Please retry.'
+ },
  settings: {
   title: 'Account performance monitoring window',
   description: 'Configure the shared rolling window for TPS, TTFT, probe degradation and process-local upstream HTTP errors.',
