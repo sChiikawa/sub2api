@@ -46,8 +46,8 @@
                   class="settings-tab-badge"
                 />
                 <NewFeatureBadge
-                  v-if="tab.key === 'email'"
-                  :notice-id="NEW_FEATURE_NOTICES.balanceForecast"
+                  v-if="tab.key === 'gateway'"
+                  :notice-id="NEW_FEATURE_NOTICES.openai409OmitEncryptedHistory"
                   :user-id="authStore.user?.id"
                   class="settings-tab-badge"
                 />
@@ -5527,6 +5527,15 @@
                   />
                 </div>
 
+              <EncryptedHistory409Settings
+                v-model="form.openai_409_omit_encrypted_history_enabled"
+                :user-id="authStore.user?.id"
+              />
+              <EncryptedHistory400Settings
+                v-model="form.openai_400_omit_encrypted_history_enabled"
+                :user-id="authStore.user?.id"
+              />
+
               <!-- OpenAI Responses 首 token 统计 -->
               <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
                 <label
@@ -8722,6 +8731,7 @@
                     <div class="relative">
                       <input
                         :value="form.payment_recharge_fee_rate ?? ''"
+                        data-testid="payment-global-fee-rate"
                         @input="
                           form.payment_recharge_fee_rate = Math.min(
                             100,
@@ -9062,6 +9072,7 @@
           <PaymentProviderList
             v-if="form.payment_enabled"
             :providers="providers"
+            :global-fee-rate="savedPaymentFeeRate"
             :loading="providersLoading"
             :can-create="hasAnyPaymentTypeEnabled"
             :enabled-payment-types="form.payment_enabled_types"
@@ -9361,13 +9372,6 @@
 
           <EmailTemplateEditor />
 
-          <BalanceForecastSettings
-            v-model:enabled="form.balance_forecast_enabled"
-            v-model:threshold-hours="form.balance_forecast_threshold_hours"
-            v-model:max-notifications="form.balance_forecast_max_notifications"
-            :user-id="authStore.user?.id"
-          />
-
           <!-- Balance Low Notification -->
           <div class="card">
             <div
@@ -9554,6 +9558,7 @@
         :show="showProviderDialog"
         :saving="providerSaving"
         :editing="editingProvider"
+        :global-fee-rate="savedPaymentFeeRate"
         :all-key-options="providerKeyOptions"
         :enabled-key-options="enabledProviderKeyOptions"
         :all-payment-types="allPaymentTypes"
@@ -9587,6 +9592,8 @@
 </template>
 
 <script setup lang="ts">
+import EncryptedHistory409Settings from "@/components/settings/EncryptedHistory409Settings.vue";
+import EncryptedHistory400Settings from "@/components/settings/EncryptedHistory400Settings.vue";
 import { excelBPSImageLimits } from "@/utils/excelBPSImageLimits";
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
@@ -9680,7 +9687,6 @@ import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiErro
 import { useAppStore, useAuthStore } from "@/stores";
 import { formatBalanceRechargeMultiplier } from "@/utils/rechargeBonus";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
-import BalanceForecastSettings from "@/components/settings/BalanceForecastSettings.vue";
 import SmartOpsSidebarSettings from "@/components/settings/SmartOpsSidebarSettings.vue";
 import NewFeatureBadge from "@/components/common/NewFeatureBadge.vue";
 import GroupSelector from "@/components/common/GroupSelector.vue";
@@ -10633,6 +10639,8 @@ const form = reactive<SettingsForm>({
   grok_cross_client_model_map_enabled: false,
   grok_default_base_url_mode: "cli",
   grok_video_source_url_enabled: false,
+  openai_409_omit_encrypted_history_enabled: false,
+  openai_400_omit_encrypted_history_enabled: false,
   // Identity patch (Claude -> Gemini)
   enable_identity_patch: true,
   identity_patch_prompt: "",
@@ -10693,9 +10701,6 @@ const form = reactive<SettingsForm>({
   codex_cli_only_allow_app_server_clients: false,
   codex_cli_only_engine_fingerprint_signals: "",
   // 余额、订阅到期与账号限额通知
-  balance_forecast_enabled: false,
-  balance_forecast_threshold_hours: 12,
-  balance_forecast_max_notifications: 3,
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
   balance_low_notify_recharge_url: "",
@@ -11730,9 +11735,7 @@ async function loadSettings() {
   loadFailed.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
-    settings.balance_forecast_enabled ??= false;
-    settings.balance_forecast_threshold_hours ??= 12;
-    settings.balance_forecast_max_notifications ??= 3;
+    savedPaymentFeeRate.value = settings.payment_recharge_fee_rate ?? 0;
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -12012,10 +12015,6 @@ const siteBillingModeHint = computed(() =>
 );
 
 async function saveSettings() {
-  if (!Number.isFinite(form.balance_forecast_threshold_hours) || form.balance_forecast_threshold_hours <= 0 || form.balance_forecast_threshold_hours > 168 || !Number.isInteger(form.balance_forecast_max_notifications) || form.balance_forecast_max_notifications < 1 || form.balance_forecast_max_notifications > 10) {
-    appStore.showError(t('admin.settings.balanceForecast.invalid'));
-    return;
-  }
   saving.value = true;
   try {
     const imageBaseUrl = form.excel_bps_image_base_url.trim();
@@ -12402,6 +12401,8 @@ async function saveSettings() {
         form.grok_cross_client_model_map_enabled,
       grok_default_base_url_mode: form.grok_default_base_url_mode,
       grok_video_source_url_enabled: form.grok_video_source_url_enabled,
+      openai_409_omit_encrypted_history_enabled: form.openai_409_omit_encrypted_history_enabled,
+      openai_400_omit_encrypted_history_enabled: form.openai_400_omit_encrypted_history_enabled,
       enable_identity_patch: form.enable_identity_patch,
       identity_patch_prompt: form.identity_patch_prompt,
       min_claude_code_version: form.min_claude_code_version,
@@ -12524,9 +12525,6 @@ async function saveSettings() {
       openai_advanced_scheduler_weight_session_sticky:
         form.openai_advanced_scheduler_weight_session_sticky.trim(),
       // 余额、订阅到期与账号限额通知
-      balance_forecast_enabled: form.balance_forecast_enabled,
-      balance_forecast_threshold_hours: form.balance_forecast_threshold_hours,
-      balance_forecast_max_notifications: form.balance_forecast_max_notifications,
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:
         Number(form.balance_low_notify_threshold) || 0,
@@ -12634,6 +12632,7 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    savedPaymentFeeRate.value = updated.payment_recharge_fee_rate ?? savedPaymentFeeRate.value;
     adminSettingsStore.smartOpsHiddenMenuItems = [...(updated.smart_ops_hidden_menu_items ?? DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS)];
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
@@ -13444,6 +13443,8 @@ function slog(...args: unknown[]) {
 const providersLoading = ref(false);
 const providerSaving = ref(false);
 const providers = ref<ProviderInstance[]>([]);
+// Provider dialogs save independently; unsaved global form edits are not effective rates.
+const savedPaymentFeeRate = ref<number>();
 const showProviderDialog = ref(false);
 const showDeleteProviderDialog = ref(false);
 const editingProvider = ref<ProviderInstance | null>(null);
