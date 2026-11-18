@@ -4,6 +4,10 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  groupForceUltrafast: 'group-force-ultrafast-initial-announcement',
+  passthroughModelFilter: 'openai-passthrough-model-filter-initial-announcement',
+  vertexMultiRegion: 'vertex-multi-region-initial-announcement',
+  accountEditPlatform: 'account-edit-platform-initial-announcement',
   groupFreeUltrafast: 'group-free-ultrafast-initial-announcement',
   oauthAPIKeyDisposition: 'oauth-initial-apikey-disposition',
   matureProviders: 'mature-provider-operations-initial-announcement',
@@ -52,6 +56,7 @@ export const NEW_FEATURE_NOTICES = {
   apiKeyLongContext: 'api-key-long-context-control-initial-announcement',
   apiKeyContextTokenLimit: 'api-key-context-token-limit-initial-announcement',
   apiKeyUsageDateRange: 'api-key-usage-date-range-initial-announcement',
+  providerProfit: 'profit-operations-provider-reconciliation',
   profitOperationsToday: 'profit-operations-today-filter-initial-announcement',
   profitOperationsTimeRanges: 'profit-operations-time-ranges-initial-announcement',
   userLiveLoad: 'user-live-load-initial-announcement',
@@ -73,4 +78,5 @@ export const NEW_FEATURE_NOTICES = {
   bpsAccountSearch: 'bps-account-search-initial-announcement',
   bpsAccountMultiProxy: 'bps-account-multi-proxy-request-routing',
   openaiAccountMultiProxy: '2026-11-16-openai-account-multi-proxy',
+  cacheTtlBillingFromRequest: 'anthropic-apikey-cache-ttl-billing-from-request-initial-announcement',
 } as const
