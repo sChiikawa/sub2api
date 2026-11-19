@@ -23,6 +23,7 @@ describe('NewFeatureBadge', () => {
 
 
   it.each([
+    ['channel UltraFast pricing', NEW_FEATURE_NOTICES.channelUltrafastPricing],
     ['user live load', NEW_FEATURE_NOTICES.userLiveLoad],
     ['Free UltraFast', NEW_FEATURE_NOTICES.groupFreeUltrafast],
     ['force UltraFast', NEW_FEATURE_NOTICES.groupForceUltrafast],
@@ -40,6 +41,7 @@ describe('NewFeatureBadge', () => {
     ['account operations multiple recipients', NEW_FEATURE_NOTICES.accountOpsMultipleEmails],
     ['account operations provider balance', NEW_FEATURE_NOTICES.accountOpsProviderBalance],
     ['account operations OAuth lifecycle', NEW_FEATURE_NOTICES.accountOpsOAuthLifecycle],
+    ['account balance notification', NEW_FEATURE_NOTICES.accountOpsBalanceNotification],
     ['OpenAI cache write TTL', NEW_FEATURE_NOTICES.openaiCacheWriteTTL12h],
     ['EasyPay refund code', NEW_FEATURE_NOTICES.easyPayRefundSuccessCode],
     ['payment provider fees', NEW_FEATURE_NOTICES.paymentProviderFees],
