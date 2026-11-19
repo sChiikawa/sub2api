@@ -2678,7 +2678,7 @@ const (
 	openAISlotAcquireOK openAISlotAcquireResult = iota
 	// openAISlotAcquireFailed：错误响应已写出，调用方直接 return。
 	openAISlotAcquireFailed
-	// openAISlotAcquireAccountBusy：账号并发槽已满，且响应尚未写出。仅在
+	// openAISlotAcquireAccountBusy：账号并发槽已满，本函数未写错误响应。仅在
 	// trackOpenAIBusyAccounts 开启时返回；调用方排除该账号后重选。
 	openAISlotAcquireAccountBusy
 	// openAISlotAcquireProfitVetoed：槽位获取成功后利润终检否决。槽位已释放、
@@ -2813,14 +2813,14 @@ func withOpenAIWSTurnBillingGroup(ctx context.Context, turnKey *service.APIKey) 
 const openAIBusyAccountsKey = "openai_busy_accounts"
 
 // openAIBusyAccountMaxSwitches 限制单个请求因账号并发已满而跳过的账号数；
-// 每跳过一个都要重新选一次号，超过后就在当前账号排队。
+// 每跳过一个都要重新选一次号，超过后直接返回并发已满。
 const openAIBusyAccountMaxSwitches = 3
 
 // openAIBusyAccounts 记录本请求仅因并发槽已满而跳过的账号。选号耗尽时把它们
-// 放回候选，请求改为在其中一个账号上排队，而不是直接失败。
+// 放回候选再选一轮：期间空出槽位就用，仍满则直接返回并发已满，不排队。
 type openAIBusyAccounts struct {
-	ids   map[int64]struct{}
-	queue bool
+	ids       map[int64]struct{}
+	exhausted bool
 }
 
 // trackOpenAIBusyAccounts 让本请求在账号并发已满时换号。调用方必须处理
@@ -2840,9 +2840,9 @@ func openAIBusyAccountsFrom(c *gin.Context) *openAIBusyAccounts {
 	return busy
 }
 
-// skip 返回 true 表示应换下一个账号，而不是在这个满槽账号上排队。
+// skip 返回 true 表示应换下一个账号；false 表示不再换号，调用方直接返回并发已满。
 func (b *openAIBusyAccounts) skip(accountID int64) bool {
-	if b == nil || b.queue || accountID <= 0 || len(b.ids) >= openAIBusyAccountMaxSwitches {
+	if b == nil || b.exhausted || accountID <= 0 || len(b.ids) >= openAIBusyAccountMaxSwitches {
 		return false
 	}
 	if _, seen := b.ids[accountID]; seen {
@@ -2852,12 +2852,12 @@ func (b *openAIBusyAccounts) skip(accountID int64) bool {
 	return true
 }
 
-// requeue 在选号耗尽后把跳过的满槽账号放回候选，下一轮改为排队。
+// requeue 在选号耗尽后把跳过的满槽账号放回候选再选一轮，这一轮不再换号。
 func (b *openAIBusyAccounts) requeue(failedAccountIDs map[int64]struct{}) bool {
-	if b == nil || b.queue || len(b.ids) == 0 {
+	if b == nil || b.exhausted || len(b.ids) == 0 {
 		return false
 	}
-	b.queue = true
+	b.exhausted = true
 	for id := range b.ids {
 		delete(failedAccountIDs, id)
 	}
@@ -3012,9 +3012,19 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		}
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
 	}
-	// 账号并发已满。响应还没写出时换下一个账号，而不是在这个账号上排队到超时。
-	if (streamStarted == nil || !*streamStarted) && !selection.WaitPlan.Pinned && openAIBusyAccountsFrom(c).skip(account.ID) {
-		return nil, openAISlotAcquireAccountBusy
+	// 账号并发已满：换下一个账号，不在满槽账号上排队。换号次数用完或全池都满时
+	// 直接返回并发已满。只有归属固定账号的请求和未开启换号的入口才排队。
+	if busy := openAIBusyAccountsFrom(c); busy != nil && !selection.WaitPlan.Pinned {
+		if busy.skip(account.ID) {
+			return nil, openAISlotAcquireAccountBusy
+		}
+		reqLog.Info("openai.account_slot_busy_not_queued",
+			zap.Int64("account_id", account.ID),
+			zap.Int("skipped_busy_accounts", len(busy.ids)),
+		)
+		status, errType, code, message := concurrencyErrorResponse(&ConcurrencyError{SlotType: "account"}, "account")
+		writeError(status, errType, code, message)
+		return nil, openAISlotAcquireFailed
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)

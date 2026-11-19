@@ -2183,10 +2183,14 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 				attempt.candidateCount = freshPlan.candidateCount
 				attempt.topK = freshPlan.topK
 				attempt.loadSkew = freshPlan.loadSkew
+				plan = freshPlan
 			}
 		}
 	}
 
+	beyond, beyondCompactBlocked, beyondErr := s.tryAcquireOpenAIAccountsBeyondTopK(ctx, req, plan, budget)
+	attempt.compactBlocked = attempt.compactBlocked || beyondCompactBlocked
+	attempt.result, attempt.err = beyond, beyondErr
 	return attempt
 }
 
